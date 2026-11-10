@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en" data-color-mode="dark" data-dark-theme="dark" style="color-scheme: dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="user-login" content="reviewer" />
+    <title>Improve search results · Pull request #23 · example/widget</title>
+    <style>
+      :root {
+        --bgColor-default: #0d1117;
+        --bgColor-muted: #161b22;
+        --fgColor-default: #f0f6fc;
+        --fgColor-muted: #9198a1;
+        --fgColor-success: #3fb950;
+        --fgColor-attention: #d29922;
+        --fgColor-done: #ab7df8;
+        --fgColor-danger: #f85149;
+        --borderColor-default: #3d444d;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #0d1117;
+        color: #f0f6fc;
+        font:
+          14px -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          sans-serif;
+      }
+      header {
+        height: 104px;
+        background: #010409;
+        padding: 24px;
+        font-weight: 600;
+        border-bottom: 1px solid #3d444d;
+      }
+      .pr-toolbar {
+        position: sticky;
+        top: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #161b22;
+        border-bottom: 1px solid #3d444d;
+        z-index: 10;
+      }
+      .pr-toolbar h1 {
+        font-size: 14px;
+        flex: 1;
+        margin: 0;
+      }
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      button {
+        font: 600 12px inherit;
+        color: #f0f6fc;
+        background: #212830;
+        border: 1px solid #3d444d;
+        border-radius: 6px;
+        padding: 7px 12px;
+        height: 32px;
+      }
+      button.review {
+        background: #238636;
+        border-color: #2ea043;
+      }
+      .separator {
+        border-left: 1px solid #3d444d;
+        height: 24px;
+        margin: 0 8px;
+      }
+      nav {
+        padding: 20px;
+        display: flex;
+        gap: 20px;
+        border-bottom: 1px solid #3d444d;
+      }
+      a {
+        color: #f0f6fc;
+        text-decoration: none;
+      }
+      main {
+        max-width: 1100px;
+        margin: 32px auto;
+        padding: 0 20px;
+      }
+      main h2 {
+        font-weight: 500;
+        font-size: 28px;
+      }
+      .card {
+        border: 1px solid #3d444d;
+        border-radius: 6px;
+        padding: 24px;
+        color: #9198a1;
+        line-height: 1.6;
+      }
+      body.light {
+        --bgColor-default: #fff;
+        --bgColor-muted: #f6f8fa;
+        --fgColor-default: #1f2328;
+        --fgColor-muted: #59636e;
+        --borderColor-default: #d1d9e0;
+        --fgColor-success: #1a7f37;
+        --fgColor-attention: #9a6700;
+        background: #fff;
+        color: #1f2328;
+      }
+      body.light a {
+        color: var(--fgColor-default);
+      }
+      body.light nav,
+      body.light .card {
+        border-color: var(--borderColor-default);
+      }
+      body.light .card {
+        color: var(--fgColor-muted);
+      }
+      body.light .pr-toolbar,
+      body.light header {
+        background: #f6f8fa;
+        color: #1f2328;
+      }
+      body.light button:not(.review) {
+        color: #1f2328;
+        background: #f6f8fa;
+        border-color: #d1d9e0;
+      }
+    </style>
+  </head>
+  <body>
+    <header>◉ &nbsp; example / widget &nbsp; &nbsp; Code &nbsp; Issues &nbsp; Pull requests</header>
+    <section class="pr-toolbar">
+      <h1>#23 &nbsp; Improve search results</h1>
+      <div class="actions">
+        <button>Merge status</button
+        ><button class="review" data-testid="review-button">Submit review ▾</button
+        ><span class="separator"></span><button aria-label="Comments">▢</button
+        ><button aria-label="Reviewers">♧</button>
+      </div>
+    </section>
+    <main>
+      <h2>Improve search results</h2>
+      <p>
+        <span class="prc-StateLabel-StateLabel-fixture">Open</span> &nbsp; contributor opened this
+        pull request
+      </p>
+      <nav>
+        <a href="/example/widget/pull/23">Overview</a
+        ><a href="/example/widget/pull/23/commits">Commits</a
+        ><a href="/example/widget/pull/23/checks">Checks</a
+        ><a href="/example/widget/pull/23/changes">Files changed</a>
+      </nav>
+      <p class="card">Review requested<br />Start your review of the changes.</p>
+      <div class="card">
+        <h3>Summary</h3>
+        Improve result ordering and add coverage for empty queries.
+      </div>
+    </main>
+    <script>
+      document.querySelectorAll('nav a').forEach((link) =>
+        link.addEventListener('click', (event) => {
+          event.preventDefault();
+          history.pushState({}, '', link.href);
+          document.dispatchEvent(new Event('turbo:load'));
+        }),
+      );
+    </script>
+  </body>
+</html>

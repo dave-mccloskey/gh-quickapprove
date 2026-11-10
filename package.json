@@ -1,0 +1,32 @@
+{
+  "name": "gh-quickapprove",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run build && node --test tests/*.test.js && node --test tests/package/*.test.js",
+    "test:e2e": "npm run build && playwright test",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "check": "npm run lint && npm test && npm run test:e2e",
+    "package": "npm run build && node scripts/package.js",
+    "build": "node scripts/build.js"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
+    "@types/chrome": "^0.3.7",
+    "eslint": "^10.14.0",
+    "fflate": "^0.8.3",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "typescript": ">=5.9 <6.1",
+    "typescript-eslint": "^8.72.2"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

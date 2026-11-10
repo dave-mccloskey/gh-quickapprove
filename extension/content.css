@@ -1,0 +1,167 @@
+.qa-root {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 32px;
+  vertical-align: middle;
+  align-items: center;
+  height: 32px;
+}
+.qa-root > button.qa-button[data-state] {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin: 0;
+  border: 1px solid var(--button-default-borderColor-rest, var(--borderColor-default, #3d444d));
+  border-radius: 6px;
+  background: var(--button-default-bgColor-rest, var(--bgColor-muted, #212830));
+  color: var(--fgColor-default, #f0f6fc);
+  cursor: pointer;
+  box-shadow: var(--button-default-shadow-resting, 0 1px 0 rgba(0, 0, 0, 0.04));
+}
+.qa-root > button.qa-button[data-state]:hover {
+  background: var(
+    --button-default-bgColor-hover,
+    var(
+      --bgColor-neutral-muted,
+      color-mix(in srgb, var(--fgColor-default, #f0f6fc) 8%, var(--bgColor-muted, #212830))
+    )
+  );
+}
+.qa-root > button.qa-button[data-state]:focus-visible {
+  outline: 2px solid var(--focus-outlineColor, #4493f8);
+  outline-offset: 2px;
+}
+.qa-root > button.qa-button[data-state][aria-disabled='true'] {
+  cursor: default;
+}
+.qa-root > button.qa-button[data-state][data-state='available'] {
+  color: var(--fgColor-attention, #d29922);
+  background: var(--bgColor-attention-muted, rgba(187, 128, 9, 0.08));
+  border-color: var(--borderColor-attention-muted, rgba(187, 128, 9, 0.4));
+}
+.qa-root > button.qa-button[data-state][data-state='available']:hover {
+  background: var(
+    --button-default-bgColor-hover,
+    color-mix(
+      in srgb,
+      var(--fgColor-default, #f0f6fc) 4%,
+      var(--bgColor-attention-muted, rgba(187, 128, 9, 0.08))
+    )
+  );
+}
+.qa-root > button.qa-button[data-state][data-state='approved'] {
+  color: var(--fgColor-success, #3fb950);
+  background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15));
+  border-color: var(--borderColor-success-muted, rgba(46, 160, 67, 0.4));
+}
+.qa-root > button.qa-button[data-state][data-state='merged'] {
+  color: var(--fgColor-done, #ab7df8);
+}
+.qa-root > button.qa-button[data-state][data-state='closed'] {
+  color: var(--fgColor-danger, #f85149);
+}
+.qa-root
+  > button.qa-button[data-state]:is(
+    [data-state='own'],
+    [data-state='pending'],
+    [data-state='account'],
+    [data-state='setup'],
+    [data-state='loading'],
+    [data-state='busy']
+  ) {
+  color: var(--fgColor-muted, #9198a1);
+}
+.qa-root
+  > button.qa-button[data-state]:is(
+    [data-state='invalid'],
+    [data-state='uncertain'],
+    [data-state='changed']
+  ) {
+  color: var(--fgColor-attention, #d29922);
+}
+.qa-root
+  > button.qa-button[data-state]:is(
+    [data-state='error'],
+    [data-state='access'],
+    [data-state='canceled']
+  ) {
+  color: var(--fgColor-danger, #f85149);
+}
+.qa-root .qa-tooltip {
+  display: none;
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: max-content;
+  max-width: min(280px, 85vw);
+  padding: 8px 12px;
+  color: var(--fgColor-onEmphasis, #fff);
+  background: var(--bgColor-emphasis, #252b33);
+  border: 1px solid var(--borderColor-default, #3d444d);
+  border-radius: 6px;
+  font:
+    12px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 4px 12px #0003;
+}
+.qa-root .qa-tooltip:popover-open {
+  display: block;
+}
+.qa-root > button.qa-button[data-state][data-icon='spinner'] svg {
+  animation: qa-spin 1s linear infinite;
+}
+.qa-panel {
+  position: fixed;
+  box-sizing: border-box;
+  inset: auto;
+  width: min(320px, calc(100vw - 16px));
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--borderColor-default, #3d444d);
+  border-radius: 8px;
+  color: var(--fgColor-default, #f0f6fc);
+  background: var(--bgColor-default, #161b22);
+  font:
+    13px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  box-shadow: 0 8px 24px #0004;
+}
+.qa-panel p {
+  margin: 0 0 12px;
+}
+.qa-panel button {
+  font: inherit;
+  margin: 8px 8px 0 0;
+  padding: 4px 8px;
+  border: 1px solid var(--borderColor-default, #3d444d);
+  border-radius: 6px;
+  background: var(--bgColor-muted, #212830);
+  color: inherit;
+  cursor: pointer;
+}
+.qa-panel a {
+  display: block;
+  color: var(--fgColor-accent, #4493f8);
+}
+@keyframes qa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qa-root > button.qa-button[data-state][data-icon='spinner'] svg {
+    animation: none;
+  }
+}

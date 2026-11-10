@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitHub Quick Approve · Settings</title>
+    <link rel="stylesheet" href="options.css" />
+    <script type="module" src="options.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark" aria-hidden="true">✓</div>
+        <div>
+          <h1>GitHub Quick Approve</h1>
+          <p>One click. Review approved.</p>
+        </div>
+      </header>
+      <section class="card" aria-labelledby="connection-heading">
+        <div class="card-heading">
+          <h2 id="connection-heading">Connect GitHub</h2>
+          <span id="connection-badge">Not connected</span>
+        </div>
+        <p id="connection-status" role="status" aria-live="polite">Checking connection…</p>
+        <p class="description">
+          Add a personal access token to approve pull requests as your GitHub account.
+        </p>
+        <form id="token-form">
+          <label for="token">GitHub token</label>
+          <input
+            id="token"
+            name="token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            autocapitalize="none"
+            maxlength="512"
+            placeholder="Paste your personal access token"
+            required
+          />
+          <p id="error" role="alert" hidden></p>
+          <div class="actions">
+            <button id="save" class="primary" type="submit">Save token</button
+            ><button id="remove" type="button" hidden>Remove token</button>
+          </div>
+        </form>
+        <div id="return" hidden>
+          <p>You’re connected. Return to your PR and click the amber review button to approve.</p>
+          <button id="return-button" type="button">Return to your PR</button>
+        </div>
+      </section>
+      <section class="instructions" aria-labelledby="token-heading">
+        <h2 id="token-heading">Create a token</h2>
+        <ol>
+          <li>
+            <a
+              href="https://github.com/settings/personal-access-tokens/new?name=GitHub%20Quick%20Approve&amp;description=Approve%20pull%20requests%20from%20the%20GitHub%20header&amp;expires_in=180&amp;pull_requests=write"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Create a fine-grained personal access token <span aria-hidden="true">↗</span></a
+            >
+            with the name, description, 180-day expiration, and Pull requests permission prefilled.
+          </li>
+          <li>Select the repository owner, then choose <strong>All repositories</strong>.</li>
+          <li>
+            Confirm <strong>Pull requests</strong> is set to <strong>Read and write</strong>,
+            generate the token, and paste it above. Your organization may require a shorter
+            expiration.
+          </li>
+        </ol>
+        <p>
+          GitHub requires you to select repository access on its form. All repositories covers the
+          selected owner; it does not include repositories owned by other users or organizations.
+        </p>
+        <p>
+          Some organizations require approval or SSO authorization. Use a token for the same account
+          you’re signed in to on GitHub.
+        </p>
+        <p>
+          A compatible classic token also works; private repositories require the broader
+          <code>repo</code> scope. Prefer a fine-grained token when possible.
+        </p>
+      </section>
+      <footer>
+        Your token stays in this Chrome profile and is sent only to GitHub’s API. Local storage is
+        not an encrypted vault. Removing it here does not revoke it at GitHub;
+        <a href="https://github.com/settings/tokens" target="_blank" rel="noopener noreferrer"
+          >manage or revoke tokens</a
+        >
+        there.
+      </footer>
+    </main>
+  </body>
+</html>

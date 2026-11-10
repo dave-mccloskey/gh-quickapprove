@@ -1,6 +1,6 @@
 # GitHub Quick Approve
 
-Status: proposed for approval. Created: 11/10/26.
+Status: approved design, implemented locally. Created: 11/10/26.
 
 ## Objective
 
@@ -30,22 +30,18 @@ The user's current new PR interface is the implementation target. Its top PR act
 
 Use generic toolbar mockups in this design and future documentation. Do not include the user's repository name, PR title, source code, or other identifying repository content in screenshots.
 
-Approved resting states (no hover required):
+The user selected **option B (amber review)** in the designer's revised board below, then requested a subtler hover matching adjacent GitHub buttons. The stronger amber hover in this prototype is superseded by that refinement. The available action keeps Primer's code-review icon at rest and on hover; hover uses GitHub’s default button background token (with a small neutral fallback overlay), preserving the resting border and icon color. Keyboard focus uses the normal focus ring. Only successful approval displays the filled green check-circle. Option A is shown for comparison and is not selected.
 
-![Available, already approved, merged, own PR, and closed button states.](assets/quick-approve/resting-states.png)
+![Selected design B: amber code-review action and green completed approval (prototype hover is superseded by the subtler treatment).](assets/quick-approve/selected-amber-review.png)
 
-Hover behavior reference:
-
-![Quick approve tooltip and success behavior.](assets/quick-approve/hover-and-success.png)
-
-The resting-state board above supersedes the earlier hover board's dimmed success checkmark; use the circled check and green tinted background for Approved. Surrounding native actions are illustrative; render only actions GitHub itself provides for that PR.
+Surrounding native actions are illustrative; render only actions GitHub itself provides for that PR. The tooltip uses a top-layer popover to remain visible outside clipped headers and is available on hover and keyboard focus.
 
 ### Button states
 
 Approved resting states:
 
-- Available: green checkmark on a neutral background; tooltip "Quick approve".
-- Already approved: green circled checkmark on a subtle green background; tooltip "You approved this PR"; disabled.
+- Available: amber Primer code-review icon with a subtle amber background and border; hover subtly changes the background without brightening the border or changing the icon; tooltip "Quick approve".
+- Already approved: filled green check-circle on a subtle green background; tooltip "You approved this PR"; disabled.
 - Merged: purple merge icon; tooltip "This PR is merged"; disabled.
 - Own PR: muted gray lock; tooltip "You can't approve your own PR"; disabled.
 - Closed without merging: muted red closed-PR icon; tooltip "This PR is closed"; disabled.
@@ -60,9 +56,9 @@ The approved screenshots establish button appearance and placement. They do not 
 
 **Missing token:** show a neutral key icon in the same button position, with tooltip and accessible label "Set up Quick Approve". It remains clickable. Clicking opens the extension's options page in a new tab, keeping the PR open. Do not automatically open settings on install or on every PR navigation.
 
-The options page explains that the token is used to approve as the user and is saved only in this Chrome profile. Provide a GitHub token creation link and instructions to select the intended repositories and Pull requests read/write permission. Use a masked token field and a "Save token" button.
+The options page explains that the token is used to approve as the user and is saved only in this Chrome profile. The GitHub token creation link prefills the name GitHub Quick Approve, description, 180-day expiration, and Pull requests read/write permission. Per the user's preference, setup instructs the user to select the resource owner and All repositories. GitHub's documented URL parameters do not include repository selection; that choice remains manual and covers the selected owner. Use a masked token field and a "Save token" button.
 
-Saving validates the candidate token against GitHub's authenticated-user endpoint before persisting it. While checking, disable Save and show "Checking token…". On success, clear the field and show "Connected as <username>" and "Return to your PR". Keep the setup tab open so the result is visible. Open PR tabs refresh through an extension notification; when the user returns, the button reflects the current PR state. **Saving or replacing a token never submits an approval**; the user clicks the green check after returning.
+Saving validates the candidate token against GitHub's authenticated-user endpoint before persisting it. While checking, disable Save and show "Checking token…". On success, clear the field and show "Connected as <username>" and "Return to your PR". Keep the setup tab open so the result is visible. Open PR tabs refresh through an extension notification; when the user returns, the button reflects the current PR state. **Saving or replacing a token never submits an approval**; the user clicks the amber review button after returning.
 
 If validation fails, keep the candidate masked and editable, explain the error inline, and leave Save available for a corrected attempt. Do not overwrite a working saved token with an invalid candidate. A network failure says "Couldn't reach GitHub. Try again" rather than claiming the token is invalid. Displaying a connected account verifies identity, not write permission for every repository.
 
@@ -70,11 +66,13 @@ If validation fails, keep the candidate masked and editable, explain the error i
 
 **Valid token, unavailable repository or permission:** preserve the token and show the muted lock with an actionable message. Offer settings and Retry in the error message. Insufficient access, SSO/organization restrictions, rate limits, and temporary failures must not all be labeled invalid token. Use GitHub's error details when available; otherwise say access could not be confirmed. Missing write permission may only become apparent at submission; report it without claiming approval succeeded.
 
+The token remains local rather than using Chrome sync. The default token name is `GitHub Quick Approve`, without a hostname or installation ID.
+
 The user approved this setup and recovery flow. The PNGs cover approval/PR states; the key icons and options page will follow the same native visual styling.
 
 ## Components
 
-Use plain JavaScript modules and CSS, with no runtime framework or build step. This is a builder choice for a small extension with one injected control.
+Use strict TypeScript and CSS, with no runtime framework or runtime dependencies. Per the user's implementation request, building compiles the source to JavaScript in a clean `dist/extension` directory; packaging builds first and creates a ZIP containing only loadable extension assets. The content script compiles as an isolated script without exposing extension resources to the page. The worker and options page use ES modules.
 
 1. A content script recognizes the current PR, reads the signed-in GitHub username, mounts the button, and handles GitHub navigation and DOM replacement. An observer reconciles the control without repeating API requests for unrelated DOM mutations. Stale responses cannot update another PR's button.
 2. An extension service worker owns the credential and GitHub API calls. Messages expose fixed operations (load PR state and approve), never arbitrary URLs, methods, or request bodies. Validate the sender is a github.com PR tab, derive or verify its owner/repository/PR number, and call only api.github.com.
@@ -82,7 +80,7 @@ Use plain JavaScript modules and CSS, with no runtime framework or build step. T
 
 Use Chrome extension local storage, restricted to trusted extension contexts. The token persists across browser restarts but is not synchronized or written into the page, messages to content scripts, logs, URLs, screenshots, or repository. Local extension storage is not an encrypted vault; a compromised local profile can expose the token. Only the options page and worker handle it. Request storage permission and host access for github.com content injection and api.github.com requests; no cookie or browsing-history permission.
 
-Recommend a fine-grained personal access token limited to intended repositories with Pull requests read/write permission. Accept a compatible classic token for users who need it; document private-repository scope and organization/SSO restrictions. The token's authenticated user must match the signed-in page user. A mismatch disables approval and explains which account needs changing; never approve silently as another account.
+Use a fine-grained personal access token with Pull requests read/write permission. Default setup guidance selects All repositories for the resource owner, per the user's preference. Accept a compatible classic token for users who need it; document private-repository scope and organization/SSO restrictions. The token's authenticated user must match the signed-in page user. A mismatch disables approval and explains which account needs changing; never approve silently as another account.
 
 ## State & submission
 
@@ -90,7 +88,7 @@ Read the authenticated API user, PR metadata, and all pages of PR reviews. Compa
 
 For already approved, use the user's latest decisive review (APPROVED, CHANGES_REQUESTED, or DISMISSED). Only APPROVED disables the button. COMMENTED reviews do not erase a decisive review; DISMISSED clears an older approval rather than resurrecting it. This state means the user's approval exists; it does not claim all branch protection or merge requirements are satisfied. On new commits, requery GitHub; do not infer dismissal solely from a changed head SHA.
 
-Refresh on initial mount, PR navigation, return to a visible/focused tab, credential change, and immediately before submission. Avoid background polling. Bound simultaneous duplicate requests within the worker and disable the UI while a submission is in flight. Clear cached state when credentials change. Per-account/PR locks cover overlapping tabs within the running worker; durable attempt records preserve uncertain outcomes after worker or browser restart, as specified in Security.
+Refresh on initial mount, PR navigation, a semantic change to GitHub’s PR status badge, return to a visible/focused tab, credential change, and immediately before submission. Badge markup is only an invalidation signal; the API remains authoritative. If the badge changes during approval submission, refresh after the submission completes so a late approval result cannot overwrite a merged state. Unrelated DOM updates reuse an in-flight state read rather than superseding it. Avoid background polling. Bound simultaneous duplicate requests within the worker and disable the UI while a submission is in flight. Clear cached state when credentials change. Per-account/PR locks cover overlapping tabs within the running worker; durable attempt records preserve uncertain outcomes after worker or browser restart, as specified in Security.
 
 **A click creates a new approval only after the latest state is confirmed eligible.** Pin it to the PR head SHA shown in the loaded state. If preflight finds a different head SHA, update the state and ask for a fresh click with "New commits arrived. Review the changes before approving." If navigation changes the PR while preflight runs, cancel the action. This does not add a confirmation dialog to the normal path.
 
@@ -116,7 +114,7 @@ Restrict local storage to TRUSTED_CONTEXTS before persisting a token and before 
 
 Save only the active token and required account/status metadata. Replacing or removing it clears prior credential references and eligibility caches, cancels pending validation/reads, and prevents queued approvals from using the old credential. An already dispatched write cannot be recalled. Each operation captures a credential generation and checks it again before dispatch; a late validation response cannot restore a removed token. Remove deletes the local credential; explain that revoking the token at GitHub is a separate action. Do not promise removal erases filesystem backups or copies previously taken from the profile.
 
-Recommend an expiring fine-grained token restricted to the user's intended repositories and Pull requests read/write. A classic token can grant substantially broader access; document that tradeoff adjacent to setup instructions. Token permissions bound damage if the extension or profile is compromised. No telemetry, analytics, remote error collection, or external backend receives credentials or PR data.
+Use an expiring fine-grained token restricted to the selected resource owner and Pull requests read/write. The user selected All repositories as the setup default, so the grant includes that owner's current and future repositories rather than a repository allowlist. A classic token can grant substantially broader permissions; document that tradeoff adjacent to setup instructions. Token permissions bound damage if the extension or profile is compromised. No telemetry, analytics, remote error collection, or external backend receives credentials or PR data.
 
 ### Messages, permissions & network requests
 
@@ -148,7 +146,7 @@ There is no atomic transaction between the browser URL check, GitHub's head chec
 
 Before implementation is considered ready, verify credential storage is inaccessible to content scripts; content scripts cannot invoke credential management; foreign origins, child frames, arbitrary destinations, redirects, malformed messages, and synthetic activations cannot produce writes. Verify token replacement/removal during validation/preflight cannot revive credentials or dispatch queued writes with the old token. Check pagination, rendered errors, and logs for credential or private-data leakage. Exercise navigation (including A to B to A), head changes, mismatched identities, duplicate tabs, pending reviews, and uncertain writes with assertions about actual API calls, not only button appearance. Terminate/restart the worker and browser after attempt persistence, during POST, and after a server-side success with a lost response; assert that absent reconciliation never silently unlocks another write.
 
-This is a design-level threat model. The [independent security review](2026-11-10-quick-approve-security-review.md) found one medium and one low issue; both were resolved and rechecked. No material design-level security issue remains open. Source/package review and browser verification must confirm these controls after implementation exists; this verdict does not certify an implemented extension.
+The [independent security review](2026-11-10-quick-approve-security-review.md) records the design findings and subsequent source review. Implementation verification includes the loaded extension in Chromium, content-script credential isolation, and uncertain-write recovery across a browser restart. Live authenticated GitHub behavior still requires validation against the user's rollout; fixture-based browser tests do not establish that compatibility.
 
 ## Verification & delivery
 

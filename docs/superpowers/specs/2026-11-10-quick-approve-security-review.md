@@ -37,7 +37,7 @@ The reviewer rechecked these requirements and marked the finding resolved. Test 
 
 **The injected button is not trusted UI against a compromised GitHub page.** A malicious page script can move or disguise it and induce a genuine click. Trusted-event checks prevent simple scripted activation, not clickjacking. Page-derived account matching cannot cryptographically establish the browser session identity. Eliminating those risks would change the approved inline one-click interaction.
 
-A compromised local profile, browser, or extension package can expose and misuse the token within its granted permissions. Local storage is not an encrypted vault. An expiring token limited to intended repositories reduces the impact; a classic token may grant broader access.
+A compromised local profile, browser, or extension package can expose and misuse the token within its granted permissions. Local storage is not an encrypted vault. An expiring fine-grained token limits the grant to the selected resource owner and permissions; a classic token may grant broader access. After the review, the user chose All repositories as the setup default. That grant covers all repositories under the selected owner, including future repositories; it does not retain the earlier recommendation of a repository allowlist.
 
 A push or navigation can race the final check. The attempt fixes the PR and commit it will approve, but there is no atomic browser/API transaction. GitHub's own review and branch-protection policies remain authoritative. Explicit recovery of an uncertain write can still cause duplication; the recovery warning states that limitation.
 
@@ -47,3 +47,18 @@ A push or navigation can race the final check. The attempt fixes the PR and comm
 - [Chrome MessageSender contract](https://developer.chrome.com/docs/extensions/reference/api/runtime#type-MessageSender): sender context and document identity.
 - [Chrome extension storage](https://developer.chrome.com/docs/extensions/reference/api/storage) and [Chromium storage access-level implementation](https://github.com/chromium/chromium/blob/main/extensions/browser/api/storage/storage_utils.cc): trusted-context storage controls and persistence.
 - [Chrome extension security guidance](https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure) and [cross-origin request guidance](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests): message authority, request destinations, and safe rendering.
+
+## Implementation review (11/10/26)
+
+A fresh independent code/security reviewer inspected the TypeScript source, privileged operations, tests, manifest, and build/packaging scripts. It reported three medium-severity findings and one low-severity finding; none were critical or high severity.
+
+- **Medium: stale reconciliation could delete a newer attempt record.** PR state reads, reconciliation, resets, and approval creation now share one per-PR operation queue. A regression reproduces the overlapping read/delete/write sequence and verifies the new uncertain record continues to block a second write.
+- **Medium: a delayed 401 could restore a removed token.** Invalidation captures its credential revision before yielding and checks the expected generation inside serialized credential persistence. A regression removes the token during the old identity check and verifies it stays removed.
+- **Medium: navigation within a PR could leave the button permanently busy.** Navigation invalidation clears local submission state and forces route reconciliation while the worker retains its durable write protection. A browser regression navigates with an approval response delayed and verifies the new tab state recovers.
+- **Low: a failed token removal appeared successful.** Settings accept only the expected success state before changing connection controls; returned worker errors remain visible and preserve Remove. A loaded-extension browser test injects a storage failure and verifies that recovery UI.
+
+The implementer reproduced each finding with a failing regression, applied fixes, and ran the unit/package and browser suites successfully. The reviewer did not re-review the fixes; this disposition is backed by those regressions and the implementer's verification, not a second independent sign-off.
+
+Additional browser checks verify trusted-context token isolation, rejected content-script credential commands, native keyboard activation and synthetic-click rejection, cross-tab updates, invalid token recovery, and uncertain-write protection across a real browser restart. Package verification checks a clean compile and excludes TypeScript source, tests, plans, and dependencies from the ZIP. UI screenshots use invented repository data.
+
+**Live authenticated GitHub remains unverified.** Browser coverage uses intercepted pages/API responses and isolated test profiles. The reviewer's declined items (live GitHub behavior, screenshot quality, final package contents, and post-fix verification) were handled by fixture-based browser tests, visual inspection, package checks, and regressions where applicable; those checks do not replace a live rollout test. The residual risks above still apply.

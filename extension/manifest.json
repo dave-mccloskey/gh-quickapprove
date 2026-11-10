@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub Quick Approve",
+  "version": "0.1.0",
+  "description": "Approve a GitHub pull request with one click from its header.",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.github.com/*", "https://github.com/*"],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "options_ui": {"page": "options.html", "open_in_tab": true},
+  "action": {"default_title": "GitHub Quick Approve settings"},
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.github.com; base-uri 'none'; frame-ancestors 'none'"
+  }
+}
