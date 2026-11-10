@@ -6,11 +6,11 @@ Status: proposed for approval. Created: 11/10/26.
 
 Add one compact approval button to every GitHub PR page. Clicking it submits an approval immediately using GitHub's REST API and a personal access token. The button stays in the PR header and communicates whether approval is available without requiring a hover.
 
-The user approved the visual mockups and selected the token-backed API approach. The behavior and implementation defaults below are proposed builder decisions unless explicitly identified as approved.
+The user approved the visual mockups and token setup/recovery flow, selected the token-backed API approach, and limited support to GitHub's new PR interface. Other implementation defaults below are proposed builder decisions unless explicitly identified as approved.
 
 ## Scope & constraints
 
-Support github.com in Chrome (Manifest V3), **only in the new PR interface shown below**, across Overview, Commits, Checks, Files changed, and commit detail pages within that interface. Legacy PR views are out of scope; do not add selectors or compatibility code for them. Direct loads, browser back/forward, and navigation without a full page reload must produce exactly one button for the current PR. Non-PR pages have no button.
+Support github.com in Chrome (Manifest V3), **only in the new PR interface described below**, across Overview, Commits, Checks, Files changed, and commit detail pages within that interface. Legacy PR views are out of scope; do not add selectors or compatibility code for them. Direct loads, browser back/forward, and navigation without a full page reload must produce exactly one button for the current PR. Non-PR pages have no button.
 
 Approval requires one click, with no confirmation and no review message. The extension does not merge, request changes, dismiss reviews, or edit GitHub's existing review controls. V1 ships as an unpacked extension with installation instructions; Web Store publishing, GitHub Enterprise hosts, OAuth, and multiple saved tokens are out of scope.
 
@@ -24,15 +24,11 @@ Alternative: submit GitHub's existing review form using the browser session. Thi
 
 **The approved visual is a 32 px square button placed immediately after Submit review**, with an 8 px gap. On tabs without that control, place it in the corresponding PR header action group. Keep it visible with the header while scrolling where GitHub provides a sticky header. Match GitHub's typography, borders, radii, and light/dark theme variables. Do not introduce a floating widget or move existing actions.
 
-### Reference & approved PNG mockups
+### Approved PNG mockups
 
 The user's current new PR interface is the implementation target. Its top PR action bar contains Merge status and Submit review, above the Overview/Commits/Checks/Files changed tabs. Insert the button immediately after Submit review and before the separator and existing icon actions.
 
-![Implementation target: the user's new GitHub PR interface.](assets/quick-approve/new-pr-view-reference.png)
-
-Approved button placement (the screenshot illustrates the action bar while viewing a diff):
-
-![Quick approve immediately after Submit review.](assets/quick-approve/header-placement.png)
+Use generic toolbar mockups in this design and future documentation. Do not include the user's repository name, PR title, source code, or other identifying repository content in screenshots.
 
 Approved resting states (no hover required):
 
@@ -54,7 +50,7 @@ Approved resting states:
 - Own PR: muted gray lock; tooltip "You can't approve your own PR"; disabled.
 - Closed without merging: muted red closed-PR icon; tooltip "This PR is closed"; disabled.
 
-Additional builder defaults: loading and submission use a spinner and disable the button. Missing or invalid credentials use a neutral setup/key icon; clicking opens extension settings. Other unavailable states use a muted lock with the specific reason. A pending draft review uses the locked state and tooltip "Finish your pending review in GitHub". Errors use a visible error icon plus an accessible short message near the button; the message persists until dismissed or a new attempt starts. Successful approval changes the button immediately without navigating or scrolling.
+Additional builder defaults: loading and submission use a spinner and disable the button. Missing credentials use a neutral key icon; invalid credentials use an amber key icon; clicking either opens extension settings. Other unavailable states use a muted lock with the specific reason. A pending draft review uses the locked state and tooltip "Finish your pending review in GitHub". Errors use a visible error icon plus an accessible short message near the button; the message persists until dismissed or a new attempt starts. Successful approval changes the button immediately without navigating or scrolling.
 
 All states have accessible names and tooltip descriptions available on keyboard focus. Disabled states must remain focusable with aria-disabled so their explanation is discoverable. Icon shape, color, and accessible text distinguish states. Respect reduced motion and narrow viewports.
 
@@ -74,7 +70,7 @@ If validation fails, keep the candidate masked and editable, explain the error i
 
 **Valid token, unavailable repository or permission:** preserve the token and show the muted lock with an actionable message. Offer settings and Retry in the error message. Insufficient access, SSO/organization restrictions, rate limits, and temporary failures must not all be labeled invalid token. Use GitHub's error details when available; otherwise say access could not be confirmed. Missing write permission may only become apparent at submission; report it without claiming approval succeeded.
 
-These setup and recovery states are proposed behavior; the approved PNGs cover approval/PR states. Their key icons and the options page will follow the same native visual styling.
+The user approved this setup and recovery flow. The PNGs cover approval/PR states; the key icons and options page will follow the same native visual styling.
 
 ## Components
 
