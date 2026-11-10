@@ -90,13 +90,65 @@ Read the authenticated API user, PR metadata, and all pages of PR reviews. Compa
 
 For already approved, use the user's latest decisive review (APPROVED, CHANGES_REQUESTED, or DISMISSED). Only APPROVED disables the button. COMMENTED reviews do not erase a decisive review; DISMISSED clears an older approval rather than resurrecting it. This state means the user's approval exists; it does not claim all branch protection or merge requirements are satisfied. On new commits, requery GitHub; do not infer dismissal solely from a changed head SHA.
 
-Refresh on initial mount, PR navigation, return to a visible/focused tab, credential change, and immediately before submission. Avoid background polling. Bound simultaneous duplicate requests within the worker and disable the UI while a submission is in flight. Clear cached state when credentials change. Per-PR locks cover overlapping tabs within the running worker; after worker restart, authoritative review reads provide reconciliation.
+Refresh on initial mount, PR navigation, return to a visible/focused tab, credential change, and immediately before submission. Avoid background polling. Bound simultaneous duplicate requests within the worker and disable the UI while a submission is in flight. Clear cached state when credentials change. Per-account/PR locks cover overlapping tabs within the running worker; durable attempt records preserve uncertain outcomes after worker or browser restart, as specified in Security.
 
 **A click creates a new approval only after the latest state is confirmed eligible.** Pin it to the PR head SHA shown in the loaded state. If preflight finds a different head SHA, update the state and ask for a fresh click with "New commits arrived. Review the changes before approving." If navigation changes the PR while preflight runs, cancel the action. This does not add a confirmation dialog to the normal path.
 
-Send a create-review request with event APPROVE, the checked commit ID, and no body/comments. Never submit or modify a pending draft review. If one exists, direct the user to GitHub's review UI. On confirmed API success, render Approved and refresh authoritative state. If a response is lost or times out, requery reviews before allowing another attempt; do not automatically retry a write. A commit arriving after preflight can still leave approval attached to the checked SHA; GitHub's review policies remain authoritative.
+Send a create-review request with event APPROVE, the checked commit ID, and no body/comments. Never submit or modify a pending draft review. If one exists, direct the user to GitHub's review UI. On confirmed API success, render Approved and refresh authoritative state. If a response is lost or times out, enter an uncertain state and requery reviews; an absent review does not prove the write failed. Keep submission blocked until authoritative reconciliation or explicit recovery, and never automatically retry a write. A commit arriving after preflight can still leave approval attached to the checked SHA; GitHub's review policies remain authoritative.
 
 Handle expired tokens, inaccessible repositories, insufficient permission, organization restrictions, rate limits, and validation failures with short actionable messages. Do not claim permission is known before GitHub establishes it. An API denial leaves approval unavailable for that attempt and offers Retry after the underlying issue is fixed. Never translate an ambiguous response into success.
+
+## Security
+
+**The extension holds a credential capable of acting as the user; the worker must expose only the PR operations this feature needs.** The protected assets are the token, the user's review identity, private PR metadata, and the integrity of the repository/PR/commit being approved. One-click approval deliberately omits a confirmation dialog; a genuine activation of the visible button is the normal authorization event.
+
+### Trust boundaries & threat model
+
+The options page and service worker run in the extension origin and are trusted with the token. The content script runs in Chrome's isolated world but reads an untrusted page DOM. GitHub's API is authoritative for authenticated identity, PR metadata, reviews, and write results. Page titles, links, messages, icons, and DOM attributes are not authority to choose an API destination or change the token.
+
+Consider accidental double clicks and stale tabs; malicious repository content; a web page attempting to invoke extension privileges; manipulated DOM or error responses; and a stolen local Chrome profile. A compromised browser, extension package, or github.com script execution can subvert the workflow. The controls below limit ordinary web content and implementation mistakes; they do not make an inline button a trusted display in a hostile page.
+
+### Credential lifecycle
+
+**Only the extension options page can add, replace, or remove a token.** The worker accepts credential-management messages only from its exact packaged options URL and own extension ID, not a github.com content script or an arbitrary extension-origin page. The input is masked and never populated with the saved value. Candidate tokens stay in the options page and worker until validation; clear the input after success and on page close. JavaScript strings do not provide reliable memory zeroization.
+
+Restrict local storage to TRUSTED_CONTEXTS before persisting a token and before processing worker messages on startup. Feature-detect storage.local.setAccessLevel and fail closed if it is unavailable or the restriction cannot be established; do not save or use credentials. Content scripts receive only normalized state, account display information, and safe errors. Never expose storage snapshots or token values. Notifications about credential changes carry no secret.
+
+Save only the active token and required account/status metadata. Replacing or removing it clears prior credential references and eligibility caches, cancels pending validation/reads, and prevents queued approvals from using the old credential. An already dispatched write cannot be recalled. Each operation captures a credential generation and checks it again before dispatch; a late validation response cannot restore a removed token. Remove deletes the local credential; explain that revoking the token at GitHub is a separate action. Do not promise removal erases filesystem backups or copies previously taken from the profile.
+
+Recommend an expiring fine-grained token restricted to the user's intended repositories and Pull requests read/write. A classic token can grant substantially broader access; document that tradeoff adjacent to setup instructions. Token permissions bound damage if the extension or profile is compromised. No telemetry, analytics, remote error collection, or external backend receives credentials or PR data.
+
+### Messages, permissions & network requests
+
+Use an isolated-world, top-frame content script. Do not provide externally_connectable access, page-script injection, a window.postMessage/custom-event bridge, or web-accessible extension pages. Approval starts only from a trusted native click/keyboard activation handled by the content script; synthetic .click() and dispatched events must not submit. This is a local event check, not a worker-verifiable proof of human intent.
+
+The worker validates the extension ID, sender tab, top-level frame, document identity, exact HTTPS github.com origin, and PR route on every PR operation. Derive the target from the browser-supplied sender URL; confirm the tab's current URL before a write. Reject mismatched message targets, unsupported operations, malformed owner/repository names, nonpositive or unsafe PR numbers, and unexpected credential fields. Credential commands have a separate options-only path. Never accept a caller-supplied HTTP URL, authorization header, method, review event, body, or review ID for mutation.
+
+The worker constructs API routes under the fixed HTTPS api.github.com origin. Encode each validated path segment. Reject redirects for authenticated requests. For paginated reads, construct the next page from the validated endpoint and numeric page index; do not fetch arbitrary Link-header URLs with the token. Omit ambient cookies. Set timeouts and return sanitized, bounded error messages; do not echo request headers, raw response bodies, or token input. Render external strings using textContent, and use fixed GitHub URLs for setup links.
+
+Request only storage, github.com content access, and api.github.com host access. Package all JavaScript, styles, and icons; no remote scripts, eval, inline handlers, or runtime dependency loading. Use a restrictive extension-page CSP with scripts limited to packaged code and network access limited to the GitHub API. Do not request cookies, history, debugger, native messaging, broad host access, or externally exposed messaging.
+
+### Approval integrity & residual risk
+
+**The worker rechecks identity, eligibility, target, and commit before every write.** Compare the API identity with the signed-in GitHub account, fail closed when page identity is absent or ambiguous, and fetch PR author/head/state from the API rather than trusting DOM data. Bind each attempt to its initiating tab/document, route generation, PR, credential generation, and displayed head SHA. The content script increments its route generation on every detected PR route transition (including A to B to A); document identity alone is insufficient because in-page navigation can retain the document. Before dispatch, obtain a fresh acknowledgment from that content script confirming the captured generation, PR, account, and SHA still match, and recheck the browser's current tab URL. Cancel on mismatch, missing acknowledgment, or a disconnected document. An old long-lived messaging port is not proof of the current route. Repository transfer/rename redirects stop the attempt and require loading the canonical PR URL.
+
+Keep per-account/PR writes serialized across tabs. Before dispatching POST, persist a small attempt record containing a generated attempt ID, numeric account ID, repository/PR identity, checked SHA, and the review IDs known before dispatch. If persistence fails, do not send the write. The record contains no token or review body and survives worker/browser restarts. A record written just before a crash may describe an unsent request; handle it as uncertain rather than assume it is safe to retry.
+
+Resolve the record on a definitive successful API response (including the new review ID), a definitive rejection without mutation, or an authoritative read showing a new matching APPROVED review for that account, PR, and SHA. Do not treat time elapsed, an empty review result, a timeout, a generic server error, or credential replacement as proof of failure. While unresolved, block further approvals for that account/PR across tabs and restarts. Preserve the record across Remove/replacement so re-adding the same account cannot bypass it; once resolved, delete the record. Only retain metadata needed for unresolved attempts, and do not export it.
+
+Recovery shows "Approval result unknown. Check the PR's review history before retrying" with a GitHub review-history link and Recheck. If reads cannot resolve it, offer an explicit "Allow another attempt" recovery action with a warning that another approval may be created. This acknowledges the uncertainty and clears the block; it does not submit. A fresh click on Quick approve is still required. This exceptional recovery is separate from the normal one-click path.
+
+Never auto-submit after setup, token replacement, retry recovery, or navigation. A pending review remains untouched. Preserve GitHub's authorization and branch-protection decisions; the extension cannot promise merge eligibility.
+
+There is no atomic transaction between the browser URL check, GitHub's head check, and the approval request. Navigation or a push can race the final dispatch. The target and commit captured by the attempt remain fixed; do not redirect the approval to a newly displayed PR or silently approve a newer commit. GitHub may record approval against the checked older commit, subject to its policies.
+
+**A compromised GitHub page can disguise or move the injected button and mislead the user into a real click.** Trusted-event checks prevent simple scripted clicks, but do not prevent clickjacking or DOM deception. Account matching also depends on page-provided identity and is not cryptographic proof of the browser session's account. Mitigating those threats fully would require a trusted extension UI/confirmation instead of the approved inline one-click flow. Local malware or a compromised extension can obtain the saved token and use its granted permissions directly. These are explicit residual risks, not guarantees provided by isolated worlds or local storage.
+
+### Security acceptance checks
+
+Before implementation is considered ready, verify credential storage is inaccessible to content scripts; content scripts cannot invoke credential management; foreign origins, child frames, arbitrary destinations, redirects, malformed messages, and synthetic activations cannot produce writes. Verify token replacement/removal during validation/preflight cannot revive credentials or dispatch queued writes with the old token. Check pagination, rendered errors, and logs for credential or private-data leakage. Exercise navigation (including A to B to A), head changes, mismatched identities, duplicate tabs, pending reviews, and uncertain writes with assertions about actual API calls, not only button appearance. Terminate/restart the worker and browser after attempt persistence, during POST, and after a server-side success with a lost response; assert that absent reconciliation never silently unlocks another write.
+
+This is a design-level threat model. The [independent security review](2026-11-10-quick-approve-security-review.md) found one medium and one low issue; both were resolved and rechecked. No material design-level security issue remains open. Source/package review and browser verification must confirm these controls after implementation exists; this verdict does not certify an implemented extension.
 
 ## Verification & delivery
 
@@ -110,6 +162,9 @@ Use focused unit tests for review-state reduction, route parsing, and worker req
 - [Chrome extension storage](https://developer.chrome.com/docs/extensions/reference/api/storage): local storage and trusted-context access controls.
 - [Refined GitHub quick-review](https://github.com/refined-github/refined-github/blob/main/source/features/quick-review.tsx): token-backed approval precedent.
 - [GitHub REST authentication](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api): invalid credentials, permission failures, and organization authentication restrictions.
+- [Chrome extension security guidance](https://developer.chrome.com/docs/extensions/develop/security-privacy/stay-secure): least privilege, isolated execution, and safe message handling.
+- [Chrome cross-origin request guidance](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests): fixed request destinations and safe rendering of remote data.
+- [Chrome extension service worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle): worker termination and loss of in-memory state.
 
 ## Left to the builder
 
