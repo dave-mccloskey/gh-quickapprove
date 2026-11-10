@@ -10,7 +10,7 @@ The user approved the visual mockups and selected the token-backed API approach.
 
 ## Scope & constraints
 
-Support github.com in Chrome (Manifest V3), including Conversation, Commits, Checks, Files changed, individual commit pages within a PR, and GitHub's newer Changes view. Direct loads, browser back/forward, and navigation without a full page reload must produce exactly one button for the current PR. Non-PR pages have no button.
+Support github.com in Chrome (Manifest V3), **only in the new PR interface shown below**, across Overview, Commits, Checks, Files changed, and commit detail pages within that interface. Legacy PR views are out of scope; do not add selectors or compatibility code for them. Direct loads, browser back/forward, and navigation without a full page reload must produce exactly one button for the current PR. Non-PR pages have no button.
 
 Approval requires one click, with no confirmation and no review message. The extension does not merge, request changes, dismiss reviews, or edit GitHub's existing review controls. V1 ships as an unpacked extension with installation instructions; Web Store publishing, GitHub Enterprise hosts, OAuth, and multiple saved tokens are out of scope.
 
@@ -23,6 +23,28 @@ Alternative: submit GitHub's existing review form using the browser session. Thi
 ## User experience
 
 **The approved visual is a 32 px square button placed immediately after Submit review**, with an 8 px gap. On tabs without that control, place it in the corresponding PR header action group. Keep it visible with the header while scrolling where GitHub provides a sticky header. Match GitHub's typography, borders, radii, and light/dark theme variables. Do not introduce a floating widget or move existing actions.
+
+### Reference & approved PNG mockups
+
+The user's current new PR interface is the implementation target. Its top PR action bar contains Merge status and Submit review, above the Overview/Commits/Checks/Files changed tabs. Insert the button immediately after Submit review and before the separator and existing icon actions.
+
+![Implementation target: the user's new GitHub PR interface.](assets/quick-approve/new-pr-view-reference.png)
+
+Approved button placement (the screenshot illustrates the action bar while viewing a diff):
+
+![Quick approve immediately after Submit review.](assets/quick-approve/header-placement.png)
+
+Approved resting states (no hover required):
+
+![Available, already approved, merged, own PR, and closed button states.](assets/quick-approve/resting-states.png)
+
+Hover behavior reference:
+
+![Quick approve tooltip and success behavior.](assets/quick-approve/hover-and-success.png)
+
+The resting-state board above supersedes the earlier hover board's dimmed success checkmark; use the circled check and green tinted background for Approved. Surrounding native actions are illustrative; render only actions GitHub itself provides for that PR.
+
+### Button states
 
 Approved resting states:
 
@@ -37,6 +59,22 @@ Additional builder defaults: loading and submission use a spinner and disable th
 All states have accessible names and tooltip descriptions available on keyboard focus. Disabled states must remain focusable with aria-disabled so their explanation is discoverable. Icon shape, color, and accessible text distinguish states. Respect reduced motion and narrow viewports.
 
 The approved screenshots establish button appearance and placement. They do not require showing GitHub's Submit review action when GitHub itself omits it (e.g., a merged PR).
+
+### Token setup & recovery
+
+**Missing token:** show a neutral key icon in the same button position, with tooltip and accessible label "Set up Quick Approve". It remains clickable. Clicking opens the extension's options page in a new tab, keeping the PR open. Do not automatically open settings on install or on every PR navigation.
+
+The options page explains that the token is used to approve as the user and is saved only in this Chrome profile. Provide a GitHub token creation link and instructions to select the intended repositories and Pull requests read/write permission. Use a masked token field and a "Save token" button.
+
+Saving validates the candidate token against GitHub's authenticated-user endpoint before persisting it. While checking, disable Save and show "Checking token…". On success, clear the field and show "Connected as <username>" and "Return to your PR". Keep the setup tab open so the result is visible. Open PR tabs refresh through an extension notification; when the user returns, the button reflects the current PR state. **Saving or replacing a token never submits an approval**; the user clicks the green check after returning.
+
+If validation fails, keep the candidate masked and editable, explain the error inline, and leave Save available for a corrected attempt. Do not overwrite a working saved token with an invalid candidate. A network failure says "Couldn't reach GitHub. Try again" rather than claiming the token is invalid. Displaying a connected account verifies identity, not write permission for every repository.
+
+**Invalid saved token:** if GitHub rejects its authentication, invalidate cached eligibility and show an amber key icon with tooltip "GitHub token expired or invalid. Update token". Clicking opens options with the same message and a replacement field. Stop retrying the rejected token during navigation/focus until the user supplies a replacement. Keep Remove available. A token invalidated during a click never causes automatic resubmission after recovery.
+
+**Valid token, unavailable repository or permission:** preserve the token and show the muted lock with an actionable message. Offer settings and Retry in the error message. Insufficient access, SSO/organization restrictions, rate limits, and temporary failures must not all be labeled invalid token. Use GitHub's error details when available; otherwise say access could not be confirmed. Missing write permission may only become apparent at submission; report it without claiming approval succeeded.
+
+These setup and recovery states are proposed behavior; the approved PNGs cover approval/PR states. Their key icons and the options page will follow the same native visual styling.
 
 ## Components
 
@@ -75,6 +113,7 @@ Use focused unit tests for review-state reduction, route parsing, and worker req
 - [GitHub review API](https://docs.github.com/en/rest/pulls/reviews): review creation, review listing, and token permissions.
 - [Chrome extension storage](https://developer.chrome.com/docs/extensions/reference/api/storage): local storage and trusted-context access controls.
 - [Refined GitHub quick-review](https://github.com/refined-github/refined-github/blob/main/source/features/quick-review.tsx): token-backed approval precedent.
+- [GitHub REST authentication](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api): invalid credentials, permission failures, and organization authentication restrictions.
 
 ## Left to the builder
 
