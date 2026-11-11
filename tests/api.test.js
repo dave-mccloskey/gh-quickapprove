@@ -43,3 +43,42 @@ test('errors expose status and safe classification without copying server conten
     (error) => error.status === 403 && !error.message.includes('secret'),
   );
 });
+
+test('diagnostics distinguish response headers from a stalled JSON body without leaking requests', async () => {
+  const events = [];
+  let body;
+  const stream = new ReadableStream({
+    start: (controller) => {
+      body = controller;
+    },
+  });
+  const traceId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
+  const api = createApi(
+    async () => new Response(stream, {headers: {'x-ratelimit-remaining': '123'}}),
+    (name, fields) => events.push({name, fields}),
+  );
+  const pending = api.pull(target, 'FAKE_SECRET_MARKER', traceId);
+  await new Promise((done) => setTimeout(done, 0));
+  assert.deepEqual(
+    events.map((e) => e.name),
+    ['api.begin', 'api.headers'],
+  );
+  assert.equal(events[1].fields.rateRemaining, 123);
+  body.enqueue(new TextEncoder().encode('{"privateBody":"PRIVATE_BODY"}'));
+  body.close();
+  await pending;
+  assert.equal(events.at(-1).name, 'api.end');
+  assert.ok(events.every((e) => e.fields.traceId === traceId));
+  for (const value of ['FAKE_SECRET_MARKER', 'PRIVATE_BODY', '/repos/', target.owner])
+    assert.equal(JSON.stringify(events).includes(value), false);
+});
+
+test('a broken diagnostic hook cannot break API reads or approvals', async () => {
+  const api = createApi(
+    async () => Response.json({id: 1, state: 'APPROVED'}),
+    () => {
+      throw new Error('broken diagnostics');
+    },
+  );
+  assert.equal((await api.approve(target, 'b'.repeat(40), 'fake-token')).state, 'APPROVED');
+});

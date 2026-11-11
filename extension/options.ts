@@ -1,4 +1,5 @@
 import type {ExtensionMessage, ViewState} from './model.js';
+import {isRecord} from './diagnostics.js';
 
 const form = requiredElement('token-form', HTMLFormElement);
 const input = requiredElement('token', HTMLInputElement);
@@ -21,6 +22,73 @@ window.addEventListener('pagehide', () => {
   input.value = '';
 });
 void loadStatus();
+const diagnosticToggle = requiredElement('diagnostics-enabled', HTMLInputElement);
+const diagnosticExport = requiredElement('diagnostics-export', HTMLButtonElement);
+const diagnosticClear = requiredElement('diagnostics-clear', HTMLButtonElement);
+const diagnosticStatus = requiredElement('diagnostics-status', HTMLElement);
+diagnosticToggle.addEventListener('change', () => {
+  void manageDiagnostics('diagnosticsSetEnabled');
+});
+diagnosticExport.addEventListener('click', () => {
+  void manageDiagnostics('diagnosticsExport');
+});
+diagnosticClear.addEventListener('click', () => {
+  void manageDiagnostics('diagnosticsClear');
+});
+void manageDiagnostics('diagnosticsStatus');
+
+async function manageDiagnostics(op: string) {
+  diagnosticToggle.disabled = diagnosticExport.disabled = diagnosticClear.disabled = true;
+  diagnosticStatus.textContent =
+    op === 'diagnosticsExport' ? 'Collecting the report…' : 'Updating diagnostic settings…';
+  try {
+    const result = await diagnosticRequest({
+      op,
+      ...(op === 'diagnosticsSetEnabled' ? {enabled: diagnosticToggle.checked} : {}),
+    });
+    if (op === 'diagnosticsExport') {
+      if (!isRecord(result.report)) throw new Error('Missing report');
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(result.report, null, 2)], {type: 'application/json'}),
+      );
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `quick-approve-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      diagnosticStatus.textContent = 'Report downloaded. Attach the JSON file to your bug report.';
+    } else {
+      const status =
+        op === 'diagnosticsStatus' ? result : await diagnosticRequest({op: 'diagnosticsStatus'});
+      diagnosticToggle.checked = status.enabled === true;
+      diagnosticStatus.textContent = `${status.count ?? 0} events in history.${status.failures || status.persisted !== true || status.available !== true ? ' Some history is not saved. Export before closing; the report includes storage health.' : ''}${op === 'diagnosticsClear' ? ' History cleared; new events may be recorded.' : ''}`;
+    }
+  } catch {
+    diagnosticStatus.textContent =
+      'Could not complete this diagnostic action. History may not have been saved. Try again or reload the extension.';
+  } finally {
+    diagnosticToggle.disabled = diagnosticExport.disabled = diagnosticClear.disabled = false;
+  }
+}
+
+async function diagnosticRequest(
+  message: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result: unknown = await Promise.race([
+      chrome.runtime.sendMessage(message),
+      new Promise<never>((resolve, reject) => {
+        void resolve;
+        timer = setTimeout(() => reject(new Error('Diagnostic request timed out')), 10_000);
+      }),
+    ]);
+    if (!isRecord(result) || result.ok !== true) throw new Error('Diagnostic action failed');
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function loadStatus() {
   try {
@@ -91,7 +159,7 @@ function showError(message: string) {
 }
 
 async function send(message: ExtensionMessage): Promise<ViewState> {
-  return chrome.runtime.sendMessage(message);
+  return chrome.runtime.sendMessage({...message, traceId: crypto.randomUUID()});
 }
 
 function requiredElement<T extends HTMLElement>(id: string, type: {new (): T}): T {

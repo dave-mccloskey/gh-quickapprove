@@ -1,7 +1,7 @@
 {
   "singlePurpose": "Submit GitHub pull request approvals from a compact button in the PR header.",
   "permissionJustifications": {
-    "storage": "Stores the user-supplied GitHub token, validated account identity, and approval attempt records locally in this Chrome profile. Attempt records prevent duplicate approvals when a request's result is uncertain.",
+    "storage": "Stores the user-supplied GitHub token, validated account identity, and approval attempt records locally in this Chrome profile. Attempt records prevent duplicate approvals when a request's result is uncertain. Also stores bounded local diagnostic history and the private key for pseudonymous context IDs; reports are exported only at the user's request.",
     "https://github.com/*": "Reads the signed-in GitHub username and current pull request identity and inserts the approval control in the new PR header. GitHub's client-side navigation requires the script to load before navigation to a PR. It does not scan unrelated websites or collect general browsing history.",
     "https://api.github.com/*": "Validates the user's token, reads the current PR and its reviews, and submits an approval after the user clicks Quick approve. All requests use HTTPS and go directly to GitHub."
   },
@@ -36,7 +36,7 @@
     },
     "User activity": {
       "handled": true,
-      "details": "Local approval attempt records track a requested approval to prevent duplicate submission. The extension does not record general clicks, keystrokes, or browsing activity."
+      "details": "Local approval attempt records track a requested approval to prevent duplicate submission. The extension does not record general clicks, keystrokes, or browsing activity. Local diagnostic history records operation timestamps, safe state transitions, errors, and timings to investigate bugs. It can be disabled, cleared, or exported in settings; it is not uploaded automatically."
     },
     "Website content": {
       "handled": true,

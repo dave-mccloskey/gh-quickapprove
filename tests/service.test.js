@@ -2,6 +2,42 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {createService} from '../dist/extension/service.js';
 
+test('diagnostics identify queue wait separately from execution without exposing targets', async () => {
+  const events = [];
+  let release;
+  const gate = new Promise((done) => {
+    release = done;
+  });
+  let first = true;
+  const h = harness({
+    trace: (name, fields) => events.push({name, fields}),
+    api: {
+      pull: async () => {
+        if (first) {
+          first = false;
+          await gate;
+        }
+        return {id: 99, state: 'open', merged: false, user: {id: 8}, head: {sha: 'a'.repeat(40)}};
+      },
+    },
+  });
+  await h.save();
+  const one = h.state();
+  await new Promise((done) => setTimeout(done, 0));
+  const two = h.state();
+  await new Promise((done) => setTimeout(done, 0));
+  assert.equal(events.filter((e) => e.name === 'queue.enter').length, 2);
+  assert.equal(events.filter((e) => e.name === 'queue.start').length, 1);
+  assert.equal(
+    events.find((e) => e.name === 'queue.enter' && e.fields.pending === 2).fields.op,
+    'state',
+  );
+  release();
+  await Promise.all([one, two]);
+  assert.equal(events.filter((e) => e.name === 'queue.start').length, 2);
+  assert.equal(JSON.stringify(events).includes('reviewer'), false);
+});
+
 function harness(overrides = {}) {
   const values = new Map();
   const writes = [];

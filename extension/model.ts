@@ -1,3 +1,5 @@
+import type {DiagnosticTrace} from './diagnostics.js';
+
 export interface PrTarget {
   owner: string;
   repo: string;
@@ -54,6 +56,7 @@ export interface ExtensionMessage {
   generation?: number;
   sha?: string;
   token?: string;
+  traceId?: string;
 }
 
 export interface MessageSender {
@@ -65,10 +68,10 @@ export interface MessageSender {
 }
 
 export interface GitHubApi {
-  user(token: string): Promise<GitHubUser>;
-  pull(target: PrTarget, token: string): Promise<PullRequest>;
-  reviews(target: PrTarget, token: string): Promise<Review[]>;
-  approve(target: PrTarget, sha: string, token: string): Promise<Review>;
+  user(token: string, traceId?: string): Promise<GitHubUser>;
+  pull(target: PrTarget, token: string, traceId?: string): Promise<PullRequest>;
+  reviews(target: PrTarget, token: string, traceId?: string): Promise<Review[]>;
+  approve(target: PrTarget, sha: string, token: string, traceId?: string): Promise<Review>;
 }
 
 export interface ExtensionStorage {
@@ -84,4 +87,5 @@ export interface ServiceDependencies {
   notify(): Promise<void>;
   openSettings(): Promise<void>;
   extensionId: string;
+  trace?: DiagnosticTrace;
 }

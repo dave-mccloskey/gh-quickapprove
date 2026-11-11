@@ -1,10 +1,12 @@
+declare const quickApproveBuildId: string;
+
 (() => {
   let route = '';
   let observedPageState = '';
   let refreshAfterSubmission = false;
   let generation = 0;
   let requestNumber = 0;
-  let pendingRefresh: {generation: number; request: number} | undefined;
+  let pendingRefresh: {generation: number; request: number; started: number} | undefined;
   const root = document.createElement('span');
   const button = document.createElement('button');
   const tooltip = document.createElement('span');
@@ -17,12 +19,39 @@
   let current: ContentState = {kind: 'loading', label: 'Checking approval…'};
   let submitting = false;
   let scheduled = false;
+  const clientId = crypto.randomUUID();
+  let stateSince = performance.now();
+  let lastRenderedState = '';
+  let suppressed = 0;
+  let discarded = 0;
+  let diagnosticFailures = 0;
 
   function start() {
     createControl();
+    recordDiagnostic('ui.boot', {
+      buildId: typeof quickApproveBuildId === 'string' ? quickApproveBuildId : undefined,
+    });
+    setInterval(() => {
+      if ((current?.kind === 'loading' || submitting) && performance.now() - stateSince >= 30_000)
+        recordDiagnostic('ui.stalled', diagnosticSnapshot());
+    }, 30_000);
+    window.addEventListener('error', (event) => {
+      if (event.filename.startsWith(chrome.runtime.getURL('')))
+        recordDiagnostic('ui.exception', {
+          reason: 'uncaught',
+          file: 'content.js',
+          line: event.lineno,
+          column: event.colno,
+        });
+    });
+    window.addEventListener('unhandledrejection', () =>
+      recordDiagnostic('ui.exception', {reason: 'unhandled'}),
+    );
     chrome.runtime.onMessage.addListener((message, sender, respond) => {
       if (sender.id !== chrome.runtime.id) return;
-      if (message.op === 'confirmContext') {
+      if (message.op === 'diagnosticsSnapshot') {
+        respond(diagnosticSnapshot());
+      } else if (message.op === 'confirmContext') {
         reconcile();
         respond({
           current:
@@ -32,7 +61,7 @@
             Boolean(prRoute()),
         });
       } else if (message.op === 'refreshState' && !submitting) {
-        void refresh('state', true);
+        void refresh('state', true, 'notification');
       }
     });
     new MutationObserver((records) => {
@@ -55,12 +84,15 @@
       if (event.key === 'Escape') hideTooltip();
     });
     window.addEventListener('focus', () => {
-      if (!submitting) void refresh();
+      recordDiagnostic('ui.visibility', {visible: !document.hidden});
+      if (!submitting) void refresh('state', false, 'focus');
     });
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && !submitting) void refresh();
+      recordDiagnostic('ui.visibility', {visible: !document.hidden});
+      if (!document.hidden && !submitting) void refresh('state', false, 'visibility');
     });
     window.navigation?.addEventListener('navigate', () => {
+      recordDiagnostic('ui.route', {reason: 'navigation', generation});
       submitting = false;
       route = '';
       generation++;
@@ -87,6 +119,7 @@
     const changed = identity !== route;
     const status = pageState();
     const statusChanged = Boolean(status && status !== observedPageState);
+    if (statusChanged) recordDiagnostic('ui.prState', {pageState: status, generation});
     if (status) observedPageState = status;
     if (changed) {
       route = identity;
@@ -96,6 +129,11 @@
       requestNumber++;
       submitting = false;
       current = {kind: 'loading', label: 'Checking approval…'};
+      recordDiagnostic('ui.route', {
+        reason: 'route',
+        generation,
+        pageUserPresent: Boolean(pageUser()),
+      });
       closePanel();
       hideTooltip();
     }
@@ -120,7 +158,11 @@
     if (statusChanged && submitting) refreshAfterSubmission = true;
     render();
     if (changed || statusChanged || current.kind === 'loading')
-      void refresh('state', statusChanged);
+      void refresh(
+        'state',
+        statusChanged,
+        statusChanged ? 'page-state' : changed ? 'route' : 'initial',
+      );
   }
 
   function findAnchor() {
@@ -158,22 +200,55 @@
     root.append(button, tooltip);
   }
 
-  async function refresh(op = 'state', force = false) {
+  async function refresh(op = 'state', force = false, reason = 'unknown') {
     if (!prRoute() || (submitting && op === 'state')) return;
     // Page mutations must not supersede every slow response and starve the ready state.
-    if (!force && op === 'state' && pendingRefresh?.generation === generation) return;
+    if (!force && op === 'state' && pendingRefresh?.generation === generation) {
+      suppressed++;
+      return;
+    }
     const request = ++requestNumber;
     const capturedGeneration = generation;
-    pendingRefresh = {generation, request};
+    const traceId = crypto.randomUUID();
+    const started = performance.now();
+    let outcome = 'ok';
+    pendingRefresh = {generation, request, started};
+    recordDiagnostic('ui.refresh.begin', {
+      spanId: traceId,
+      traceId,
+      op,
+      reason,
+      generation,
+      request,
+    });
     try {
-      const result = await chrome.runtime.sendMessage({op, generation, pageUser: pageUser()});
-      if (capturedGeneration !== generation || request !== requestNumber) return;
+      const result = await send({op, generation, pageUser: pageUser()}, traceId);
+      if (capturedGeneration !== generation || request !== requestNumber) {
+        outcome = 'superseded';
+        discarded++;
+        return;
+      }
       current = result;
     } catch {
-      if (capturedGeneration !== generation || request !== requestNumber) return;
+      outcome = 'error';
+      if (capturedGeneration !== generation || request !== requestNumber) {
+        outcome = 'superseded';
+        discarded++;
+        return;
+      }
       current = {kind: 'error', label: 'Quick Approve disconnected. Reload this page to reconnect'};
     } finally {
       if (pendingRefresh?.request === request) pendingRefresh = undefined;
+      recordDiagnostic('ui.refresh.end', {
+        spanId: traceId,
+        traceId,
+        op,
+        generation,
+        request,
+        outcome,
+        state: current?.kind,
+        durationMs: performance.now() - started,
+      });
     }
     render();
   }
@@ -181,7 +256,7 @@
   async function activate() {
     reconcile();
     if (['setup', 'invalid', 'account'].includes(current.kind)) {
-      await chrome.runtime.sendMessage({op: 'openSettings', generation, pageUser: pageUser()});
+      await send({op: 'openSettings', generation, pageUser: pageUser()});
       return;
     }
     if (['error', 'access', 'uncertain', 'changed', 'canceled'].includes(current.kind)) {
@@ -190,16 +265,26 @@
     }
     if (current.kind !== 'available' || submitting) return;
     submitting = true;
+    const approvalTrace = crypto.randomUUID();
+    const approvalStart = performance.now();
+    recordDiagnostic('ui.approval.begin', {
+      spanId: approvalTrace,
+      traceId: approvalTrace,
+      generation,
+    });
     const capturedGeneration = generation;
     const sha = current.sha;
     render();
     try {
-      const result = await chrome.runtime.sendMessage({
-        op: 'approve',
-        generation,
-        pageUser: pageUser(),
-        sha,
-      });
+      const result = await send(
+        {
+          op: 'approve',
+          generation,
+          pageUser: pageUser(),
+          sha,
+        },
+        approvalTrace,
+      );
       if (capturedGeneration !== generation) return;
       current = result;
     } catch {
@@ -209,6 +294,13 @@
         sha,
       };
     } finally {
+      recordDiagnostic('ui.approval.end', {
+        spanId: approvalTrace,
+        traceId: approvalTrace,
+        generation,
+        state: current?.kind,
+        durationMs: performance.now() - approvalStart,
+      });
       if (capturedGeneration === generation) {
         submitting = false;
         render();
@@ -224,6 +316,11 @@
   function render() {
     if (!button) return;
     const kind = submitting ? 'busy' : current.kind;
+    if (kind !== lastRenderedState) {
+      lastRenderedState = kind;
+      stateSince = performance.now();
+      recordDiagnostic('ui.control', {state: kind, generation, mounted: root.isConnected});
+    }
     const label = submitting ? 'Approving…' : current.label;
     const disabled = [
       'loading',
@@ -356,7 +453,7 @@
         await refresh();
       });
       panelAction('Settings', async () => {
-        await chrome.runtime.sendMessage({op: 'openSettings', generation, pageUser: pageUser()});
+        await send({op: 'openSettings', generation, pageUser: pageUser()});
       });
     }
     panelAction('Dismiss', async () => closePanel());
@@ -405,6 +502,53 @@
   function prRoute() {
     const match = location.pathname.match(/^\/[a-z\d-]+\/[a-z\d_.-]+\/pull\/[1-9]\d*(?=\/|$)/i);
     return match?.[0] ?? '';
+  }
+
+  function diagnosticSnapshot() {
+    return {
+      clientId,
+      buildId: typeof quickApproveBuildId === 'string' ? quickApproveBuildId : undefined,
+      state: submitting ? 'busy' : current?.kind,
+      pageState: observedPageState || 'unknown',
+      generation,
+      request: requestNumber,
+      pendingRefresh: Boolean(pendingRefresh),
+      submitting,
+      durationMs: performance.now() - stateSince,
+      waitMs: pendingRefresh ? performance.now() - pendingRefresh.started : 0,
+      suppressed,
+      discarded,
+      diagnosticFailures,
+      deferredRefresh: refreshAfterSubmission,
+      visible: !document.hidden,
+      online: navigator.onLine,
+      mounted: root.isConnected,
+      anchorFound: Boolean(findAnchor()),
+      count: document.querySelectorAll('[data-quickapprove-root]').length,
+      pageUserPresent: Boolean(pageUser()),
+    };
+  }
+
+  function recordDiagnostic(name: string, fields: Record<string, unknown> = {}) {
+    try {
+      void chrome.runtime
+        .sendMessage({op: 'diagnosticsEvent', name, fields: {clientId, ...fields}})
+        .then(
+          (result) => {
+            if (result?.ok !== true) diagnosticFailures++;
+          },
+          () => {
+            diagnosticFailures++;
+          },
+        );
+    } catch {
+      diagnosticFailures++;
+      /* A disconnected content script cannot record to its former worker. */
+    }
+  }
+
+  function send(message: Record<string, unknown>, traceId = crypto.randomUUID()) {
+    return chrome.runtime.sendMessage({...message, traceId});
   }
 
   start();

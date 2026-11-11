@@ -81,6 +81,27 @@
           <code>repo</code> scope. Prefer a fine-grained token when possible.
         </p>
       </section>
+      <section class="card diagnostics" aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Bug reports</h2>
+        <p>
+          Diagnostic history is saved locally so a problem can be investigated after it happens.
+          Export a report after a stuck spinner or unexpected behavior, even if it has recovered.
+        </p>
+        <label class="diagnostic-toggle"
+          ><input id="diagnostics-enabled" type="checkbox" disabled />Record diagnostic
+          history</label
+        >
+        <p class="description">
+          Keeps up to seven days and 2,000 events. Reports contain timestamps, build and browser
+          versions, pseudonymous correlation IDs, timings, and states. They exclude tokens, account
+          names, repository names, URLs, and PR contents. Nothing is uploaded automatically.
+        </p>
+        <div class="actions">
+          <button id="diagnostics-export" type="button">Export diagnostic report</button
+          ><button id="diagnostics-clear" type="button">Clear history</button>
+        </div>
+        <p id="diagnostics-status" role="status" aria-live="polite">Loading diagnostic settings…</p>
+      </section>
       <footer>
         Your token stays in this Chrome profile and is sent only to GitHub’s API. Local storage is
         not an encrypted vault. Removing it here does not revoke it at GitHub;

@@ -8,6 +8,23 @@
   --link: #58a6ff;
   --green: #3fb950;
 }
+.diagnostics {
+  margin-top: 32px;
+}
+.diagnostic-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.diagnostic-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+#diagnostics-status {
+  color: var(--muted);
+  font-size: 12px;
+}
 * {
   box-sizing: border-box;
 }

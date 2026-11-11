@@ -95,6 +95,111 @@ test('missing token opens packaged setup without submitting', async () => {
   expect(server.posts).toHaveLength(0);
 });
 
+test('worker sessions persist their exact build fingerprint', async () => {
+  const settings = await options();
+  const first = await settings.evaluate(() =>
+    chrome.runtime.sendMessage({op: 'diagnosticsExport'}),
+  );
+  expect(
+    first.report.events.some(
+      (e) =>
+        e.name === 'worker.build' &&
+        e.session === first.report.workerSession &&
+        e.fields.buildId === first.report.buildId,
+    ),
+  ).toBe(true);
+  await context.close();
+  await launchContext();
+  const reopened = await options();
+  const second = await reopened.evaluate(() =>
+    chrome.runtime.sendMessage({op: 'diagnosticsExport'}),
+  );
+  expect(second.report.workerSession).not.toBe(first.report.workerSession);
+  for (const session of [first.report.workerSession, second.report.workerSession]) {
+    expect(
+      second.report.events.some(
+        (e) =>
+          e.name === 'worker.build' &&
+          e.session === session &&
+          e.fields.buildId === second.report.buildId,
+      ),
+    ).toBe(true);
+  }
+});
+
+test('a stalled status check leaves a downloadable private report across worker restart', async () => {
+  test.setTimeout(90_000);
+  const settings = await connect();
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    const get = chrome.storage.local.get.bind(chrome.storage.local);
+    chrome.storage.local.get = (key) => (key === 'credential' ? new Promise(() => {}) : get(key));
+  });
+  const page = await prPage();
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'loading',
+  );
+  const second = await prPage();
+  await expect(second.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'loading',
+  );
+  await page.waitForTimeout(31_000);
+  const download = settings.waitForEvent('download');
+  await settings.getByRole('button', {name: 'Export diagnostic report'}).click();
+  const file = await download;
+  await file.saveAs('test-results/diagnostic-stall-report.json');
+  const text = await readFile(await file.path(), 'utf8');
+  const report = JSON.parse(text);
+  expect(report.events.some((e) => e.name === 'ui.stalled')).toBe(true);
+  expect(report.events.some((e) => e.name === 'message.stalled')).toBe(true);
+  expect(report.events.some((e) => e.name === 'queue.enter' && e.fields.pending >= 2)).toBe(true);
+  expect(report.unfinished.some((e) => e.event.name === 'storage.begin')).toBe(true);
+  expect(report.events.some((e) => e.name === 'ui.snapshot' && e.fields.state === 'loading')).toBe(
+    true,
+  );
+  expect(report.buildId).toMatch(/^[a-f0-9]{64}$/);
+  expect(
+    report.events.some(
+      (e) =>
+        e.name === 'worker.build' &&
+        e.session === report.workerSession &&
+        e.fields.buildId === report.buildId,
+    ),
+  ).toBe(true);
+  for (const value of [
+    'fake-test-token',
+    'reviewer',
+    'contributor',
+    'example/widget',
+    'https://github.com',
+    'https://api.github.com',
+    'a'.repeat(40),
+  ])
+    expect(text).not.toContain(value);
+  expect(server.posts).toHaveLength(0);
+  expect(server.readRequests ?? 0).toBe(0);
+  await context.close();
+  await launchContext();
+  const reopened = await options();
+  const saved = await reopened.evaluate(() =>
+    chrome.runtime.sendMessage({op: 'diagnosticsExport'}),
+  );
+  expect(saved.report.events.some((e) => e.name === 'ui.stalled')).toBe(true);
+  expect(saved.report.unfinished.some((e) => e.interrupted)).toBe(true);
+  await expect(reopened.getByLabel('Record diagnostic history')).toBeChecked();
+  await reopened.getByLabel('Record diagnostic history').uncheck();
+  await reopened.getByRole('button', {name: 'Clear history', exact: true}).click();
+  const cleared = await reopened.evaluate(() =>
+    chrome.runtime.sendMessage({op: 'diagnosticsExport'}),
+  );
+  expect(cleared.report.events).toEqual([]);
+  expect(cleared.report.enabled).toBe(false);
+  await expect(reopened.getByText('Connected as reviewer', {exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(0);
+});
+
 test('one native click approves pinned commit and keeps toolbar placement', async () => {
   await connect();
   const page = await prPage();
@@ -269,6 +374,32 @@ test('content-script context cannot read credentials or manage tokens', async ()
     returnByValue: true,
   });
   expect(mutation.result.value.kind).toBe('error');
+  for (const op of ['diagnosticsExport', 'diagnosticsClear', 'diagnosticsSetEnabled']) {
+    const denied = await cdp.send('Runtime.evaluate', {
+      contextId: isolated.id,
+      expression: `chrome.runtime.sendMessage({op:${JSON.stringify(op)},enabled:false})`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    expect(denied.result.value.ok).toBe(false);
+  }
+  await cdp.send('Runtime.evaluate', {
+    contextId: isolated.id,
+    expression: `chrome.runtime.sendMessage({op:'diagnosticsEvent',name:'ui.control',fields:{state:'PRIVATE_STATE_MARKER',token:'PRIVATE_TOKEN_MARKER',url:'https://private.invalid',label:'PRIVATE_LABEL_MARKER'}})`,
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  const settings = await options();
+  const report = await settings.evaluate(() =>
+    chrome.runtime.sendMessage({op: 'diagnosticsExport'}),
+  );
+  for (const secret of [
+    'PRIVATE_STATE_MARKER',
+    'PRIVATE_TOKEN_MARKER',
+    'PRIVATE_LABEL_MARKER',
+    'private.invalid',
+  ])
+    expect(JSON.stringify(report)).not.toContain(secret);
   await page.reload();
   await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
 });

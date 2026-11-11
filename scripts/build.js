@@ -2,6 +2,8 @@ import {execFileSync} from 'node:child_process';
 import {copyFile, mkdir, rm, readFile, writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {chromeVersion} from './release-version.js';
+import {createHash} from 'node:crypto';
+import {readdir} from 'node:fs/promises';
 
 await rm('dist/extension', {recursive: true, force: true});
 execFileSync(
@@ -29,3 +31,14 @@ if (process.env.RELEASE_NAME) {
   manifest.version_name = process.env.RELEASE_NAME;
   await writeFile('dist/extension/manifest.json', `${JSON.stringify(manifest, null, 2)}\n`);
 }
+const fingerprint = createHash('sha256');
+for (const name of (await readdir('dist/extension')).sort()) {
+  fingerprint.update(name);
+  fingerprint.update(await readFile(`dist/extension/${name}`));
+}
+const buildId = fingerprint.digest('hex');
+await writeFile('dist/extension/build-info.json', `${JSON.stringify({buildId})}\n`);
+await writeFile(
+  'dist/extension/build-info.js',
+  `var quickApproveBuildId = ${JSON.stringify(buildId)};\n`,
+);

@@ -8,6 +8,7 @@ import type {
   ViewState,
 } from './model.js';
 import {parsePrUrl, reduceState} from './shared.js';
+import {emitDiagnostic} from './diagnostics.js';
 
 /** Owns credentials and serializes approvals across content-script requests. */
 export function createService({
@@ -17,8 +18,10 @@ export function createService({
   notify,
   openSettings,
   extensionId,
+  trace,
 }: ServiceDependencies) {
   const operations = new Map<string, Promise<ViewState>>();
+  const queued = new Map<string, number>();
   let credentialRevision = 0;
   let credentialQueue = Promise.resolve();
 
@@ -30,6 +33,16 @@ export function createService({
       return {kind: 'setup', label: 'Set up Quick Approve'};
     }
     const previous = operations.get(target.key);
+    const queueSpan = crypto.randomUUID();
+    const entered = performance.now();
+    const depth = (queued.get(target.key) ?? 0) + 1;
+    queued.set(target.key, depth);
+    emitDiagnostic(
+      trace,
+      'queue.enter',
+      {spanId: queueSpan, traceId: message.traceId, op: message.op, pending: depth},
+      target.key,
+    );
     const operation = (
       previous
         ? previous.then(
@@ -37,11 +50,32 @@ export function createService({
             () => undefined,
           )
         : Promise.resolve()
-    ).then(() => handlePr(message, sender, target));
+    ).then(() => {
+      emitDiagnostic(
+        trace,
+        'queue.start',
+        {
+          spanId: queueSpan,
+          traceId: message.traceId,
+          op: message.op,
+          waitMs: performance.now() - entered,
+        },
+        target.key,
+      );
+      return handlePr(message, sender, target);
+    });
     operations.set(target.key, operation);
     try {
       return await operation;
     } finally {
+      queued.set(target.key, Math.max(0, (queued.get(target.key) ?? 1) - 1));
+      if (queued.get(target.key) === 0) queued.delete(target.key);
+      emitDiagnostic(
+        trace,
+        'queue.end',
+        {traceId: message.traceId, op: message.op, durationMs: performance.now() - entered},
+        target.key,
+      );
       if (operations.get(target.key) === operation) operations.delete(target.key);
       if (message.op === 'approve') await notify();
     }
@@ -56,10 +90,21 @@ export function createService({
     const revision = credentialRevision;
     try {
       credential = await storage.get<Credential>('credential');
+      emitDiagnostic(
+        trace,
+        'service.phase',
+        {
+          traceId: message.traceId,
+          phase: 'credential',
+          present: Boolean(credential),
+          invalid: Boolean(credential?.invalid),
+        },
+        target.key,
+      );
       if (!credential) return {kind: 'setup', label: 'Set up Quick Approve'};
       if (credential.invalid)
         return {kind: 'invalid', label: 'GitHub token expired or invalid. Update token'};
-      const snapshot = await load(target, credential, message.pageUser);
+      const snapshot = await load(target, credential, message.pageUser, message.traceId);
       if (message.op === 'resetAttempt') {
         if (!(await verifyContext(sender, message))) return canceled();
         await storage.remove(snapshot.attemptKey);
@@ -94,7 +139,13 @@ export function createService({
         return canceled();
       }
       try {
-        const review = await api.approve(target, message.sha, credential.token);
+        emitDiagnostic(
+          trace,
+          'service.phase',
+          {traceId: message.traceId, phase: 'dispatch'},
+          target.key,
+        );
+        const review = await api.approve(target, message.sha, credential.token, message.traceId);
         if (!Number.isSafeInteger(review.id) || review.state !== 'APPROVED')
           return uncertain(message.sha);
         await storage.remove(snapshot.attemptKey);
@@ -132,7 +183,7 @@ export function createService({
     if (!token || token.length > 512 || /\s/.test(token))
       return {kind: 'invalid', label: 'Enter a valid GitHub token'};
     try {
-      const user = await api.user(token);
+      const user = await api.user(token, message.traceId);
       if (!Number.isSafeInteger(user.id) || typeof user.login !== 'string' || !user.login)
         throw new Error('Invalid identity');
       if (revision !== credentialRevision) return canceled();
@@ -180,13 +231,26 @@ export function createService({
     return operation;
   }
 
-  async function load(target: PrTarget, credential: Credential, pageUser?: string) {
-    const pr = await api.pull(target, credential.token);
+  async function load(
+    target: PrTarget,
+    credential: Credential,
+    pageUser?: string,
+    traceId?: string,
+  ) {
+    emitDiagnostic(trace, 'service.phase', {traceId, phase: 'pull'}, target.key);
+    const pr = await api.pull(target, credential.token, traceId);
     if (!Number.isSafeInteger(pr.id) || !pr.user?.id || typeof pr.head?.sha !== 'string')
       throw new Error('Invalid PR');
-    const reviews = await api.reviews(target, credential.token);
+    emitDiagnostic(trace, 'service.phase', {traceId, phase: 'reviews'}, target.key);
+    const reviews = await api.reviews(target, credential.token, traceId);
     const attemptKey = `attempt:${credential.user.id}:${pr.id}`;
     let attempt = await storage.get<Attempt>(attemptKey);
+    emitDiagnostic(
+      trace,
+      'service.phase',
+      {traceId, phase: 'attempt', hasAttempt: Boolean(attempt)},
+      target.key,
+    );
     const pending = attempt;
     if (
       pending &&
@@ -202,9 +266,21 @@ export function createService({
       attempt = undefined;
     }
     const snapshot = {pr, reviews, user: credential.user, attemptKey};
+    const state = reduceState({...snapshot, pageUser, pendingAttempt: Boolean(attempt)});
+    emitDiagnostic(
+      trace,
+      'service.state',
+      {
+        traceId,
+        state: state.kind,
+        pageUserPresent: Boolean(pageUser),
+        hasAttempt: Boolean(attempt),
+      },
+      target.key,
+    );
     return {
       ...snapshot,
-      state: reduceState({...snapshot, pageUser, pendingAttempt: Boolean(attempt)}),
+      state,
     };
   }
 
@@ -232,11 +308,17 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
     sender.id !== extensionId
   )
     throw new Error('Unauthorized request');
+  if (
+    message.traceId !== undefined &&
+    (typeof message.traceId !== 'string' ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(message.traceId))
+  )
+    throw new Error('Invalid trace ID');
   const credentialOps = ['status', 'setToken', 'removeToken'];
   if (credentialOps.includes(message.op)) {
     if (sender.url !== `chrome-extension://${extensionId}/options.html`)
       throw new Error('Unauthorized credential request');
-    const allowed = message.op === 'setToken' ? ['op', 'token'] : ['op'];
+    const allowed = message.op === 'setToken' ? ['op', 'token', 'traceId'] : ['op', 'traceId'];
     if (
       Object.keys(message).some((key) => !allowed.includes(key)) ||
       (message.op === 'setToken' && typeof message.token !== 'string')
@@ -260,7 +342,13 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
     (message.generation ?? -1) < 0
   )
     throw new Error('Malformed PR request');
-  const allowed = ['op', 'pageUser', 'generation', ...(message.op === 'approve' ? ['sha'] : [])];
+  const allowed = [
+    'op',
+    'pageUser',
+    'generation',
+    'traceId',
+    ...(message.op === 'approve' ? ['sha'] : []),
+  ];
   if (Object.keys(message).some((key) => !allowed.includes(key)))
     throw new Error('Unexpected request field');
   if (message.op === 'approve' && !/^[a-f\d]{40,64}$/i.test(message.sha ?? ''))

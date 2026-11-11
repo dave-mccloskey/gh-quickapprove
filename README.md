@@ -46,3 +46,11 @@ After changing source, run `npm run build`, reload the extension in `chrome://ex
 ## Releases
 
 Use **Create release** in GitHub Actions to build a date-numbered release with the extension ZIP and store submission materials. **Submit to Chrome Web Store** is a separate manual workflow. See the [publishing guide](docs/publishing.md) for setup, authentication, and recovery instructions.
+
+## Report a problem
+
+Open extension settings and choose **Export diagnostic report** after a stuck spinner or unexpected behavior. Attach the downloaded JSON with a short description of what happened. History survives worker and browser restarts, so you can export after a problem recovers. Exporting does not call GitHub or submit an approval.
+
+Diagnostic history stays local and is bounded to seven days and 2,000 events, plus unfinished operations. It records build/browser versions, timings, state transitions, safe error categories, and pseudonymous context IDs. It excludes tokens, account/repository names, URLs, and PR contents. Use **Clear history** to delete it or turn **Record diagnostic history** off. Neither action removes your token or clears an uncertain approval attempt.
+
+After installing this update, reload the extension and refresh existing GitHub tabs once. Recording starts in the updated scripts; earlier incidents cannot be reconstructed retroactively.

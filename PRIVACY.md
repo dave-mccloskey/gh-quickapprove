@@ -6,7 +6,11 @@ Your token and validated account identity are stored in local extension storage 
 
 The extension sends authenticated requests directly to https://api.github.com. GitHub receives your token and the request information needed to provide its service. The extension does not send this information to its developer or an analytics provider. It does not sell user data, serve ads, or execute remotely hosted code.
 
-You can remove the stored token in extension settings. Removing it does not revoke it at GitHub. Approval attempt records may remain to prevent duplicate submissions; uninstalling the extension removes its local extension storage. GitHub retains submitted reviews according to its own policies.
+Diagnostic history is recorded locally by default to investigate problems such as a stuck loading indicator. It contains timestamps, extension and Chrome versions, a build fingerprint, request categories and HTTP status codes, timings, state transitions, and pseudonymous correlation IDs for tabs and PRs. It excludes access tokens, account names, repository names, URLs, commit IDs, PR contents, raw exception messages, and raw stack traces. The private key used to generate context pseudonyms is not included in exported reports.
+
+Diagnostic history keeps up to seven days and 2,000 recent events, plus up to 100 unfinished operations. You can turn recording off, clear history, or export a JSON report in extension settings. Reports are downloaded locally and are not uploaded automatically. The developer receives a report only if you choose to share it. Removing a token does not clear diagnostic history.
+
+You can remove the stored token in extension settings. Removing it does not revoke it at GitHub. Approval attempt records may remain to prevent duplicate submissions; uninstalling the extension removes its local extension storage, including diagnostic history. GitHub retains submitted reviews according to its own policies.
 
 Local extension storage is not an encrypted vault. Protect your browser profile and revoke tokens in GitHub settings when they are no longer needed.
 
