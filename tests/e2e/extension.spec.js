@@ -21,7 +21,7 @@ test.beforeEach(async () => {
   await launchContext();
 });
 
-async function launchContext() {
+async function launchContext({viewport = {width: 1440, height: 900}, deviceScaleFactor = 1} = {}) {
   context = await chromium.launchPersistentContext(profile, {
     channel: 'chromium',
     headless: true,
@@ -29,7 +29,8 @@ async function launchContext() {
       `--disable-extensions-except=${resolve('dist/extension')}`,
       `--load-extension=${resolve('dist/extension')}`,
     ],
-    viewport: {width: 1440, height: 900},
+    viewport,
+    deviceScaleFactor,
   });
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
@@ -323,6 +324,40 @@ test('captures generic dark, light and narrow UI screenshots', async () => {
   await settings.setViewportSize({width: 390, height: 844});
   await expect(settings.getByRole('button', {name: 'Save token', exact: true})).toBeInViewport();
   await settings.screenshot({path: 'test-results/options-mobile-light.png', fullPage: true});
+});
+
+test('captures ready-to-upload store screenshots with generic accounts and repositories', async () => {
+  const settings = await options();
+  await settings.setViewportSize({width: 1280, height: 800});
+  await settings.emulateMedia({colorScheme: 'dark'});
+  await expect(settings.getByText('Not connected', {exact: true})).toBeVisible();
+  await expect(settings.getByLabel('GitHub token')).toHaveValue('');
+  await settings.screenshot({path: 'test-results/store-03-settings.png'});
+
+  await context.close();
+  await launchContext({viewport: {width: 1024, height: 640}, deviceScaleFactor: 1.25});
+  await connect();
+  const page = await prPage();
+  const control = page.getByRole('button', {name: 'Quick approve', exact: true});
+  await expect(control).toBeVisible();
+  await control.hover();
+  await expect(page.getByText('Quick approve', {exact: true})).toBeVisible();
+  await page.screenshot({path: 'test-results/store-01-quick-approve.png'});
+
+  await control.click();
+  const approved = page.getByRole('button', {name: 'You approved this PR', exact: true});
+  await expect(approved).toHaveAttribute('aria-disabled', 'true');
+  await page.locator('p.card').evaluate((card) => {
+    card.replaceChildren(
+      'You approved these changes',
+      document.createElement('br'),
+      'Your approval is recorded on this pull request.',
+    );
+  });
+  await approved.hover();
+  await expect(page.getByText('You approved this PR', {exact: true})).toBeVisible();
+  await page.screenshot({path: 'test-results/store-02-approved.png'});
+  expect(server.posts).toEqual([{event: 'APPROVE', commit_id: sha}]);
 });
 
 test('navigating within a PR during submission does not leave the button busy', async () => {

@@ -1,0 +1,25 @@
+Approve a GitHub pull request with one click from its header.
+
+GitHub Quick Approve adds a compact amber review button beside Submit review in GitHub's new pull request interface. Click it once to submit an approval immediately, without opening a review dialog.
+
+The button shows your review state at a glance:
+• Amber: ready to approve.
+• Green: you have approved this PR.
+• Purple: the PR is merged.
+• Red: the PR is closed.
+• A lock or key explains when approval is unavailable or setup is required.
+
+Hover or focus the button for an explanation. The control follows you across the PR's Overview, Commits, Checks, and Files changed pages. It also updates when the PR changes state without a page reload.
+
+SETUP
+Connect your GitHub account with a personal access token. Settings include a token creation link with the name, 180-day expiration, and Pull requests: Read and write permission prefilled. Select the repository owner and repository access on GitHub, then paste the token into the extension. Organization approval or SSO authorization may be required.
+
+PRIVACY
+Your token stays in local extension storage in your Chrome profile and is sent only to GitHub's API. The extension does not synchronize tokens, use analytics, serve ads, or send repository information to its developer. Local storage is not an encrypted vault.
+
+REQUIREMENTS
+Works on github.com in the new pull request interface. GitHub Enterprise and the legacy PR interface are not supported. A token is required. You cannot approve your own PR. Pending draft reviews must be completed in GitHub.
+
+Quick approve submits an approval immediately. It does not merge the PR or bypass GitHub's permissions and review rules.
+
+GitHub Quick Approve is an independent project and is not affiliated with GitHub.

@@ -1,0 +1,12 @@
+GitHub Quick Approve requires a GitHub account and a personal access token. It supports github.com's new pull request interface.
+
+1. Install the extension and open its settings from the toolbar icon.
+2. Use the token creation link. For a test repository you control, grant Pull requests: Read and write permission. Complete any organization approval or SSO requirement. Paste the token into settings and save. The connected account must match the account signed in on github.com.
+3. Open a PR in that repository authored by another account. Locate the amber review icon beside Submit review. Hover it to see Quick approve.
+4. Click the amber icon once. This submits an approval immediately. Confirm that the review appears in GitHub and the icon changes to green. Hover the green icon to see You approved this PR.
+5. Navigate among Overview, Commits, Checks, and Files changed. The control remains in the PR header.
+6. Open your own PR to see the unavailable state. Open merged and closed PRs to see the purple and red states. Remove the token in settings to see the setup state.
+
+The extension does not merge PRs or bypass review permissions. A pending draft review must be completed through GitHub. If a request's result is uncertain, the extension blocks another approval until the user checks the review history and explicitly clears the block.
+
+No shared credentials are required: use accounts and a test repository controlled by the reviewer. Approvals are real GitHub reviews; use a disposable PR for testing. No working credentials are included in this package.

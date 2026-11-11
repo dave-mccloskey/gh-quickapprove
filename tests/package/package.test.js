@@ -49,3 +49,35 @@ test('release build stamps the ZIP manifest without modifying source versions', 
   assert.equal(manifest.version_name, release);
   assert.equal(await readFile('extension/manifest.json', 'utf8'), source);
 });
+
+test('store bundle contains finished listing fields, public GitHub links, and three upload-size PNGs', async () => {
+  const release = '2034.01.02.4';
+  const repository = 'example-tools/review-helper';
+  execFileSync(process.execPath, ['scripts/release-bundle.js'], {
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      RELEASE_NAME: release,
+      GITHUB_REPOSITORY: repository,
+      GITHUB_SHA: 'c'.repeat(40),
+    },
+  });
+  const files = unzipSync(await readFile(`dist/release/store-materials-${release}.zip`));
+  const decode = (name) => new TextDecoder().decode(files[name]);
+  const listing = JSON.parse(decode('listing.json'));
+  assert.equal(listing.privacyPolicyUrl, `https://github.com/${repository}/blob/main/PRIVACY.md`);
+  assert.equal(listing.supportUrl, `https://github.com/${repository}/issues`);
+  assert.equal(listing.homepageUrl, `https://github.com/${repository}`);
+  assert.equal(decode('description.txt'), await readFile('store/description.txt', 'utf8'));
+  assert.equal(decode('PRIVACY.md'), await readFile('PRIVACY.md', 'utf8'));
+  assert.ok(files['privacy-practices.json']);
+  assert.ok(files['reviewer-instructions.txt']);
+  assert.ok(files['icon-128.png']);
+  for (const name of ['01-quick-approve.png', '02-approved.png', '03-settings.png']) {
+    assert.ok(files[name]);
+    const png = new DataView(files[name].buffer, files[name].byteOffset);
+    assert.equal(png.getUint32(16), 1280);
+    assert.equal(png.getUint32(20), 800);
+    assert.deepEqual(Buffer.from(files[name]), await readFile(`store/assets/${name}`));
+  }
+});

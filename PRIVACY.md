@@ -1,6 +1,6 @@
-GitHub Quick Approve privacy policy
+# GitHub Quick Approve privacy policy
 
-GitHub Quick Approve uses a GitHub personal access token supplied by you to read pull request and review information and submit approvals at your request. It reads the signed-in GitHub username and the current pull request identity from supported GitHub pages to select the correct account and pull request.
+GitHub Quick Approve uses a GitHub personal access token supplied by you to read pull request and review information and submit approvals at your request. It reads the signed-in GitHub username and the current pull request identity from supported GitHub pages to select the correct account and pull request. GitHub API responses can include account profile information (including an optional user-entered profile location), pull request descriptions, and review comments. The extension uses the account and review metadata needed for approval state; it does not retain profile location, descriptions, or comment bodies. It does not request device geolocation.
 
 Your token and validated account identity are stored in local extension storage in your Chrome profile. The extension also stores approval attempt records to prevent an uncertain request from being retried accidentally. These records identify a repository, pull request, account, and commit. They are not synchronized through Chrome.
 
@@ -10,4 +10,4 @@ You can remove the stored token in extension settings. Removing it does not revo
 
 Local extension storage is not an encrypted vault. Protect your browser profile and revoke tokens in GitHub settings when they are no longer needed.
 
-Support and privacy inquiries: use the support URL provided in this extension's Chrome Web Store listing.
+Support and privacy inquiries: open an issue in this project's GitHub Issues tracker, linked from its Chrome Web Store listing. Do not include access tokens or private repository details in public issues.
