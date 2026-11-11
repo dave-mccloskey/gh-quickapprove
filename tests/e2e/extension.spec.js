@@ -282,6 +282,11 @@ test('captures generic dark, light and narrow UI screenshots', async () => {
   await page.screenshot({path: 'test-results/pr-dark.png'});
   await control.hover();
   await page.screenshot({path: 'test-results/pr-hover.png'});
+  await page.setViewportSize({width: 1280, height: 800});
+  await control.hover();
+  await expect(page.getByText('Quick approve', {exact: true})).toBeVisible();
+  await page.screenshot({path: 'test-results/store-screenshot.png'});
+  await page.setViewportSize({width: 1440, height: 900});
   await page.evaluate(() => {
     document.body.classList.add('light');
     document.documentElement.style.colorScheme = 'light';

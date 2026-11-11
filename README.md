@@ -42,3 +42,7 @@ npm run check
 Checks compile the extension, run lint/format checks, exercise the worker and API behavior, and load the actual extension in isolated Chromium profiles. Browser tests intercept GitHub pages and API responses with invented fixtures; they do not approve real PRs or establish compatibility with every live GitHub rollout. Generic UI screenshots appear in `test-results/`.
 
 After changing source, run `npm run build`, reload the extension in `chrome://extensions`, and refresh the PR tab. Run `npm run format` to apply formatting. Only github.com’s new PR interface is supported; GitHub Enterprise hosts and legacy PR views are outside this version’s scope.
+
+## Releases
+
+Use **Create release** in GitHub Actions to build a date-numbered release with the extension ZIP and store submission materials. **Submit to Chrome Web Store** is a separate manual workflow. See the [publishing guide](docs/publishing.md) for setup, authentication, and recovery instructions.

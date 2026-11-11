@@ -3,3 +3,4 @@ test-results/
 playwright-report/
 dist/
 .DS_Store
+gha-creds-*.json

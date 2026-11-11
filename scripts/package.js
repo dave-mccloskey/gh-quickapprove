@@ -3,7 +3,7 @@ import {zipSync} from 'fflate';
 
 const entries = {};
 for (const filename of await readdir('dist/extension')) {
-  if (!/\.(?:js|json|html|css|txt)$/.test(filename))
+  if (!/\.(?:js|json|html|css|txt|png)$/.test(filename))
     throw new Error(`Unexpected package asset: ${filename}`);
   entries[filename] = new Uint8Array(await readFile(`dist/extension/${filename}`));
 }

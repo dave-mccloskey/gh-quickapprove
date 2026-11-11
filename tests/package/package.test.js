@@ -22,9 +22,30 @@ test('clean build discards stale executables and ZIP contains only loadable exte
   for (const script of manifest.content_scripts) {
     for (const asset of [...script.js, ...script.css]) assert.ok(files[asset]);
   }
+  for (const [size, filename] of Object.entries(manifest.icons)) {
+    assert.ok(files[filename]);
+    const png = new DataView(files[filename].buffer, files[filename].byteOffset);
+    assert.equal(png.getUint32(16), Number(size));
+    assert.equal(png.getUint32(20), Number(size));
+  }
   for (const name of names.filter((name) => name.endsWith('.js'))) {
     const code = new TextDecoder().decode(files[name]);
     for (const match of code.matchAll(/from ['"]\.\/([^'"]+)['"]/g))
       assert.ok(files[match[1]], `${name}: ${match[1]}`);
   }
+});
+
+test('release build stamps the ZIP manifest without modifying source versions', async () => {
+  const source = await readFile('extension/manifest.json', 'utf8');
+  const release = '2034.01.02.4';
+  execFileSync(process.execPath, ['scripts/build.js'], {
+    stdio: 'pipe',
+    env: {...process.env, RELEASE_NAME: release},
+  });
+  execFileSync(process.execPath, ['scripts/package.js'], {stdio: 'pipe'});
+  const files = unzipSync(await readFile('dist/gh-quickapprove.zip'));
+  const manifest = JSON.parse(new TextDecoder().decode(files['manifest.json']));
+  assert.equal(manifest.version, '2034.1.2.4');
+  assert.equal(manifest.version_name, release);
+  assert.equal(await readFile('extension/manifest.json', 'utf8'), source);
 });

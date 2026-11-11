@@ -1,0 +1,68 @@
+name: Submit to Chrome Web Store
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Existing release name (YYYY.MM.DD.N)'
+        required: true
+        type: string
+      mode:
+        description: 'Submit for review publishes after Google approval using existing visibility'
+        required: true
+        type: choice
+        default: upload-only
+        options:
+          - upload-only
+          - submit-for-review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chrome-web-store
+  cancel-in-progress: false
+
+jobs:
+  submit:
+    if: github.ref == 'refs/heads/main'
+    environment: chrome-web-store
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      RELEASE_NAME: ${{ inputs.release }}
+      SUBMISSION_MODE: ${{ inputs.mode }}
+      CWS_PUBLISHER_ID: ${{ vars.CWS_PUBLISHER_ID }}
+      CWS_EXTENSION_ID: ${{ vars.CWS_EXTENSION_ID }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Download finalized release from main
+        run: node scripts/download-release.js
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Verify release before authentication
+        run: node scripts/verify-release.js
+      - name: Authenticate to Google with short-lived credentials
+        id: auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.CWS_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/chromewebstore
+          create_credentials_file: false
+      - name: Upload or submit the verified package
+        run: node scripts/store.js
+        env:
+          CWS_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
