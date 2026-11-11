@@ -269,7 +269,7 @@ export function sanitizeDiagnosticFields(
   return result;
 }
 
-export function diagnosticError(error: unknown) {
+function diagnosticError(error: unknown) {
   const name = error instanceof Error ? error.name : '';
   return ['AbortError', 'TimeoutError', 'TypeError', 'SyntaxError', 'QuotaExceededError'].includes(
     name,

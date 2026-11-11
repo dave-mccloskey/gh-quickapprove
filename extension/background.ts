@@ -98,7 +98,10 @@ const service = createService({
 
 chrome.runtime.onMessage.addListener((message, sender, respond) => {
   if (isRecord(message) && typeof message.op === 'string' && message.op.startsWith('diagnostics')) {
-    void handleDiagnostics(message, sender).then(respond, () => respond({ok: false}));
+    void handleDiagnostics(message, sender).then(
+      (result) => respond(result),
+      () => respond({ok: false}),
+    );
     return true;
   }
   const spanId = crypto.randomUUID();
