@@ -889,3 +889,54 @@ test('draft PRs remain open for approval and Draft-to-Open refreshes state', asy
   await expect(available).toHaveAttribute('aria-disabled', 'false');
   expect(server.posts).toHaveLength(0);
 });
+
+test('Back returns from a label page to a usable PR control', async () => {
+  await connect();
+  const page = await prPage();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  await page.evaluate(() => {
+    const link = document.createElement('a');
+    link.href = '/example/widget/labels';
+    link.textContent = 'Edit labels';
+    document.body.append(link);
+  });
+  await page.getByRole('link', {name: 'Edit labels', exact: true}).click();
+  await expect(page).toHaveURL('https://github.com/example/widget/labels');
+  await page.goBack();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(0);
+});
+
+test('restoring a cached PR replaces a state request whose reply was lost', async () => {
+  await connect();
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  const worlds = [];
+  cdp.on('Runtime.executionContextCreated', ({context: execution}) => worlds.push(execution));
+  await cdp.send('Runtime.enable');
+  await page.goto('https://github.com/example/widget/pull/23');
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  const isolated = worlds.find((world) => world.origin === `chrome-extension://${extensionId}`);
+  expect(isolated).toBeTruthy();
+  await cdp.send('Runtime.evaluate', {
+    contextId: isolated.id,
+    expression: `{
+      const original = chrome.runtime.sendMessage.bind(chrome.runtime);
+      let dropped = false;
+      chrome.runtime.sendMessage = (...args) => {
+        const response = original(...args);
+        if (args[0]?.op === 'state' && !dropped) { dropped = true; return new Promise(() => {}); }
+        return response;
+      };
+    }`,
+  });
+  await page.evaluate(() => history.replaceState({}, '', '?labels'));
+  const control = page.locator('[data-quickapprove-root] button');
+  await expect(control).toHaveAttribute('data-state', 'loading');
+  // The routed harness reloads history entries; exercise the cached-document event directly.
+  await page.evaluate(() =>
+    window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true})),
+  );
+  await expect(control).toHaveAttribute('data-state', 'available');
+  expect(server.posts).toHaveLength(0);
+});

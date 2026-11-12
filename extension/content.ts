@@ -80,6 +80,14 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     for (const event of ['turbo:load', 'turbo:render', 'pjax:end'])
       document.addEventListener(event, () => schedule());
     window.addEventListener('popstate', () => schedule());
+    window.addEventListener('pageshow', (event) => {
+      if (!event.persisted) return;
+      // Cached documents can retain a runtime message whose reply was lost while frozen.
+      pendingRefresh = undefined;
+      route = '';
+      stallWatchdog.stop();
+      reconcile();
+    });
     window.addEventListener('scroll', () => hideTooltip(), true);
     window.addEventListener('resize', () => hideTooltip());
     document.addEventListener('keydown', (event) => {
