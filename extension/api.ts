@@ -192,7 +192,6 @@ function reviewMetadata(review: GraphReview | null | undefined): Review {
     id: databaseId(review.fullDatabaseId),
     state: review.state,
     user: authorIdentity(review.author),
-    commit_id: review.commit?.oid ?? '',
   };
 }
 
@@ -229,7 +228,6 @@ interface PullData {
 }
 
 interface GraphReview {
-  commit: {oid: string} | null;
   fullDatabaseId: string | null;
   state: string;
   author: {databaseId?: number | null} | null;
@@ -279,7 +277,6 @@ const reviewsQuery = `query QuickApproveReviews($owner: String!, $name: String!,
         nodes {
           fullDatabaseId state
           author { ... on User { databaseId } }
-          commit { oid }
         }
         pageInfo { hasNextPage endCursor }
       }

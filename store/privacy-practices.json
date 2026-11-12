@@ -40,7 +40,7 @@
     },
     "Website content": {
       "handled": true,
-      "details": "The current GitHub PR identity is read from the page. GraphQL requests select PR IDs, state, merged status, head commit ID, author ID, and the user's own review IDs, state, author ID, and commit IDs, including private repositories the user authorizes. Approval responses contain only the submitted review's ID and state."
+      "details": "The current GitHub PR identity is read from the page. GraphQL requests select PR IDs, state, merged status, head commit ID, author ID, and the user's own review IDs, state, and author ID, including private repositories the user authorizes. Approval responses contain only the submitted review's ID and state."
     }
   },
   "certifications": {

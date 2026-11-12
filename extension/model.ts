@@ -25,7 +25,6 @@ export interface Review {
   id: number;
   state: string;
   user: GitHubUser;
-  commit_id: string;
 }
 
 export interface ViewState {

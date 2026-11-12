@@ -261,13 +261,15 @@ export function createService({
       target.key,
     );
     const pending = attempt;
+    // A new own approval satisfies the requested result while the PR head is unchanged.
+    // Without commit access, a changed head requires an explicit review of the unknown result.
     if (
       pending &&
+      pr.head.sha === pending.sha &&
       reviews.some(
         (review) =>
           review.user?.id === credential.user.id &&
           review.state === 'APPROVED' &&
-          review.commit_id === pending.sha &&
           !pending.reviewIds.includes(review.id),
       )
     ) {

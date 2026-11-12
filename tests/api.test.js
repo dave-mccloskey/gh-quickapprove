@@ -215,3 +215,23 @@ test('a broken diagnostic hook cannot break API reads or approvals', async () =>
   );
   assert.equal((await api.approve('PR_test', sha, 'fake-token')).state, 'APPROVED');
 });
+
+test('PR-only tokens can read existing approvals without Contents permission', async () => {
+  const api = createApi(async (url, options) => {
+    const {query} = JSON.parse(options.body);
+    if (/\bcommit\s*\{/.test(query)) return Response.json({errors: [{type: 'FORBIDDEN'}]});
+    return response({
+      repository: {
+        pullRequest: {
+          reviews: {
+            nodes: [{fullDatabaseId: '11', state: 'APPROVED', author: {databaseId: 7}}],
+            pageInfo: {hasNextPage: false, endCursor: null},
+          },
+        },
+      },
+    });
+  });
+  assert.deepEqual(await api.reviews(target, 'fake-token', 'reviewer'), [
+    {id: 11, state: 'APPROVED', user: {id: 7, login: ''}},
+  ]);
+});

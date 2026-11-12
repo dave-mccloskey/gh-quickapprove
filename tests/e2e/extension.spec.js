@@ -97,6 +97,19 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
     if (operation === 'QuickApprovePull')
       return route.fulfill({json: {data: {repository: {pullRequest: server.pr}}}});
     expect(operation).toBe('QuickApproveReviews');
+    if (server.reviews.length && /\bcommit\s*\{/.test(payload.query)) {
+      return route.fulfill({
+        json: {
+          data: {repository: {pullRequest: {reviews: {nodes: [{commit: null}]}}}},
+          errors: [
+            {
+              type: 'FORBIDDEN',
+              path: ['repository', 'pullRequest', 'reviews', 'nodes', 0, 'commit'],
+            },
+          ],
+        },
+      });
+    }
     return route.fulfill({
       json: {
         data: {
@@ -317,7 +330,7 @@ test('a pending control resumes stall diagnostics after its header remounts', as
   expect(server.readRequests ?? 0).toBe(0);
 });
 
-test('one native click approves pinned commit and keeps toolbar placement', async () => {
+test('PR-only token stays approved after refresh without reading review commits', async () => {
   await connect();
   const page = await prPage();
   const approve = page.getByRole('button', {name: 'Quick approve', exact: true});
@@ -329,6 +342,8 @@ test('one native click approves pinned commit and keeps toolbar placement', asyn
   await expect(
     page.getByRole('button', {name: 'You approved this PR', exact: true}),
   ).toHaveAttribute('aria-disabled', 'true');
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
   await page.screenshot({path: 'test-results/pr-approved.png'});
   expect(server.posts).toEqual([{pullRequestId: 'PR_99', commitOid: sha}]);
   expect(

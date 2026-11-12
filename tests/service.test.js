@@ -88,7 +88,7 @@ function harness(overrides = {}) {
     reviews: async () => reviews,
     approve: async (target, sha, token) => {
       writes.push({target, sha, token});
-      const result = {id: 101, user, state: 'APPROVED', commit_id: sha};
+      const result = {id: 101, user, state: 'APPROVED'};
       reviews = [...reviews, result];
       return result;
     },
@@ -447,4 +447,30 @@ test('stale state reconciliation cannot erase a newer uncertain attempt', async 
   assert.equal((await h.state()).kind, 'uncertain');
   assert.equal((await h.approve()).kind, 'uncertain');
   assert.equal(h.writes.length, 1);
+});
+
+test('recovery stays blocked if the PR head changed or no new own approval exists', async () => {
+  for (const scenario of ['head-changed', 'existing', 'other-author']) {
+    const h = harness();
+    await h.save();
+    h.values.set('attempt:7:99', {
+      id: 'unknown',
+      accountId: 7,
+      prId: 99,
+      sha: h.pr.head.sha,
+      reviewIds: [10],
+    });
+    h.setReviews([
+      {
+        id: scenario === 'existing' ? 10 : 11,
+        state: 'APPROVED',
+        user: scenario === 'other-author' ? {id: 8} : h.user,
+      },
+    ]);
+    if (scenario === 'head-changed') h.pr.head.sha = 'b'.repeat(40);
+    assert.equal((await h.state()).kind, 'uncertain');
+    assert.equal((await h.approve()).kind, 'uncertain');
+    assert.equal(h.writes.length, 0);
+    assert.ok(h.values.has('attempt:7:99'));
+  }
 });
