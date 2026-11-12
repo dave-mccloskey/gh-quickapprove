@@ -298,6 +298,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       if (capturedGeneration !== generation) return;
       current = result;
     } catch {
+      if (capturedGeneration !== generation) return;
       current = {
         kind: 'uncertain',
         label: 'Approval result unknown. Reload the page to check its review history',

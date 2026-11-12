@@ -981,3 +981,38 @@ test('an unresponsive notification recipient cannot keep an approval busy', asyn
   await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
   expect(server.posts).toHaveLength(1);
 });
+
+test('a rejected approval from an old PR cannot put its warning on a new PR', async () => {
+  await connect();
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  const worlds = [];
+  cdp.on('Runtime.executionContextCreated', ({context: execution}) => worlds.push(execution));
+  await cdp.send('Runtime.enable');
+  await page.goto('https://github.com/example/widget/pull/23');
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  const isolated = worlds.find((world) => world.origin === `chrome-extension://${extensionId}`);
+  await cdp.send('Runtime.evaluate', {
+    contextId: isolated.id,
+    expression: `{
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = (...args) => args[0]?.op === 'approve'
+        ? new Promise((resolve, reject) => { window.rejectOldApproval = () => reject(new Error('disconnected')); })
+        : send(...args);
+    }`,
+  });
+  await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'busy',
+  );
+  await page.evaluate(() => history.pushState({}, '', '/example/widget/pull/24'));
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  await cdp.send('Runtime.evaluate', {contextId: isolated.id, expression: 'rejectOldApproval()'});
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'available',
+  );
+  expect(server.posts).toHaveLength(0);
+});
