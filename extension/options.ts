@@ -1,3 +1,4 @@
+import {timing} from './timing.js';
 import type {ExtensionMessage, ViewState} from './model.js';
 import {isRecord} from './diagnostics.js';
 
@@ -55,7 +56,7 @@ async function manageDiagnostics(op: string) {
       link.href = url;
       link.download = `quick-approve-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
       link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setTimeout(() => URL.revokeObjectURL(url), timing.reportUrlLifetimeMs);
       diagnosticStatus.textContent = 'Report downloaded. Attach the JSON file to your bug report.';
     } else {
       const status =
@@ -80,7 +81,10 @@ async function diagnosticRequest(
       chrome.runtime.sendMessage(message),
       new Promise<never>((resolve, reject) => {
         void resolve;
-        timer = setTimeout(() => reject(new Error('Diagnostic request timed out')), 10_000);
+        timer = setTimeout(
+          () => reject(new Error('Diagnostic request timed out')),
+          timing.optionsRequestMs,
+        );
       }),
     ]);
     if (!isRecord(result) || result.ok !== true) throw new Error('Diagnostic action failed');

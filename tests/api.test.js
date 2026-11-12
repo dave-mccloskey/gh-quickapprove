@@ -46,6 +46,10 @@ test('errors expose status and safe classification without copying server conten
 
 test('diagnostics distinguish response headers from a stalled JSON body without leaking requests', async () => {
   const events = [];
+  let headersReceived;
+  const headers = new Promise((resolve) => {
+    headersReceived = resolve;
+  });
   let body;
   const stream = new ReadableStream({
     start: (controller) => {
@@ -55,10 +59,13 @@ test('diagnostics distinguish response headers from a stalled JSON body without 
   const traceId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa';
   const api = createApi(
     async () => new Response(stream, {headers: {'x-ratelimit-remaining': '123'}}),
-    (name, fields) => events.push({name, fields}),
+    (name, fields) => {
+      events.push({name, fields});
+      if (name === 'api.headers') headersReceived();
+    },
   );
   const pending = api.pull(target, 'FAKE_SECRET_MARKER', traceId);
-  await new Promise((done) => setTimeout(done, 0));
+  await headers;
   assert.deepEqual(
     events.map((e) => e.name),
     ['api.begin', 'api.headers'],

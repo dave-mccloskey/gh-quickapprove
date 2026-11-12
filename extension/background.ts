@@ -1,3 +1,4 @@
+import {timing} from './timing.js';
 import {createApi} from './api.js';
 import {createService} from './service.js';
 import {parsePrUrl} from './shared.js';
@@ -116,7 +117,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
         {...fields, spanId, durationMs: performance.now() - start},
         context,
       ),
-    30_000,
+    timing.messageStallMs,
   );
   ready
     .then(() => service.handle(message, sender))
@@ -264,7 +265,7 @@ async function handleDiagnostics(
       try {
         const snapshot = await withTimeout(
           chrome.tabs.sendMessage(tab.id ?? -1, {op: 'diagnosticsSnapshot'}, {frameId: 0}),
-          1500,
+          timing.snapshotMs,
         );
         diagnostics.record(
           'ui.snapshot',
@@ -304,7 +305,7 @@ async function buildMetadata() {
   let buildId = 'unavailable';
   try {
     const response = await fetch(chrome.runtime.getURL('build-info.json'), {
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(timing.metadataMs),
     });
     const info: unknown = await response.json();
     if (isRecord(info) && typeof info.buildId === 'string' && /^[a-f0-9]{64}$/.test(info.buildId))

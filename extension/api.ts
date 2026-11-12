@@ -1,3 +1,4 @@
+import {timing} from './timing.js';
 import type {GitHubApi, PrTarget, Review} from './model.js';
 import {diagnosticErrorFields, emitDiagnostic} from './diagnostics.js';
 import type {DiagnosticTrace} from './diagnostics.js';
@@ -31,7 +32,7 @@ export function createApi(
         credentials: 'omit',
         redirect: 'error',
         cache: 'no-store',
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(timing.apiRequestMs),
       });
       emitDiagnostic(trace, 'api.headers', {
         spanId,

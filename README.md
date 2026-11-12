@@ -4,7 +4,7 @@ Adds a compact amber review button beside **Submit review** in GitHub’s new PR
 
 ## Build & install
 
-Use Node.js 22 or newer:
+Use Node.js 22.8 or newer:
 
 ```sh
 npm ci
@@ -40,6 +40,8 @@ npm run check
 ```
 
 Checks compile the extension, run lint/format checks, exercise the worker and API behavior, and load the actual extension in isolated Chromium profiles. Browser tests intercept GitHub pages and API responses with invented fixtures; they do not approve real PRs or establish compatibility with every live GitHub rollout. Generic UI screenshots appear in `test-results/`.
+
+For fast iteration, run `npm run build` after TypeScript changes, then `npm run test:unit`. Unit tests use fake clocks or explicit async signals and run in one process. `npm run test:integration` covers subprocess and packaging checks. Browser tests load a temporary extension copy with shortened timing configuration and a fresh build fingerprint; production timing defaults and `dist/extension` stay unchanged.
 
 After changing source, run `npm run build`, reload the extension in `chrome://extensions`, and refresh the PR tab. Run `npm run format` to apply formatting. Only github.com’s new PR interface is supported; GitHub Enterprise hosts and legacy PR views are outside this version’s scope.
 

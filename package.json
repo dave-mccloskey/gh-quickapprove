@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run build && node --test tests/*.test.js && node --test tests/package/*.test.js",
+    "test": "npm run build && npm run test:unit && npm run test:integration",
     "test:e2e": "npm run build && playwright test",
     "lint": "eslint . && prettier --check .",
     "format": "prettier --write .",
     "check": "npm run lint && npm test && npm run test:e2e",
     "package": "npm run build && node scripts/package.js",
-    "build": "node scripts/build.js"
+    "build": "node scripts/build.js",
+    "test:unit": "node --test --experimental-test-isolation=none tests/*.test.js",
+    "test:integration": "node --test tests/integration/*.test.js tests/package/*.test.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -27,6 +29,6 @@
     "minimatch": "^11.0.1"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.8"
   }
 }

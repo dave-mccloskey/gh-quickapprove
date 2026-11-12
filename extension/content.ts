@@ -1,4 +1,5 @@
 declare const quickApproveBuildId: string;
+declare const quickApproveTiming: typeof import('./timing.js').timing;
 
 (() => {
   let route = '';
@@ -25,21 +26,22 @@ declare const quickApproveBuildId: string;
   let suppressed = 0;
   let discarded = 0;
   let diagnosticFailures = 0;
+  const stallWatchdog = createStallWatchdog(quickApproveTiming.uiStallMs, () => {
+    if (root.isConnected && (current?.kind === 'loading' || submitting))
+      recordDiagnostic('ui.stalled', diagnosticSnapshot());
+    else stallWatchdog.stop();
+  });
 
   function start() {
     createControl();
     recordDiagnostic('ui.boot', {
       buildId: typeof quickApproveBuildId === 'string' ? quickApproveBuildId : undefined,
     });
-    setInterval(() => {
-      if ((current?.kind === 'loading' || submitting) && performance.now() - stateSince >= 30_000)
-        recordDiagnostic('ui.stalled', diagnosticSnapshot());
-    }, 30_000);
     window.addEventListener('error', (event) => {
       if (event.filename.startsWith(chrome.runtime.getURL('')))
         recordDiagnostic('ui.exception', {
           reason: 'uncaught',
-          file: 'content.js',
+          file: event.filename.split('/').pop(),
           line: event.lineno,
           column: event.colno,
         });
@@ -319,7 +321,12 @@ declare const quickApproveBuildId: string;
     if (kind !== lastRenderedState) {
       lastRenderedState = kind;
       stateSince = performance.now();
+      stallWatchdog.stop();
       recordDiagnostic('ui.control', {state: kind, generation, mounted: root.isConnected});
+    }
+    if ((kind === 'loading' || kind === 'busy') && root.isConnected && !stallWatchdog.active) {
+      stateSince = performance.now();
+      stallWatchdog.start();
     }
     const label = submitting ? 'Approving…' : current.label;
     const disabled = [
@@ -520,6 +527,7 @@ declare const quickApproveBuildId: string;
       discarded,
       diagnosticFailures,
       deferredRefresh: refreshAfterSubmission,
+      watchdogActive: stallWatchdog.active,
       visible: !document.hidden,
       online: navigator.onLine,
       mounted: root.isConnected,

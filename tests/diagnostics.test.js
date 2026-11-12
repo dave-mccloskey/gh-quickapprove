@@ -79,15 +79,32 @@ test('unfinished spans and pseudonyms survive a worker restart', async () => {
 
 test('retention and event bounds prune history and count discarded events', async () => {
   const h = harness();
+  h.values.set('diagnosticHistory', {
+    schema: 1,
+    enabled: true,
+    secret: 'a'.repeat(64),
+    events: Array.from({length: 2000}, (_, count) => ({
+      time: 1_800_000_000_000,
+      session: 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa',
+      name: 'ui.control',
+      fields: {count},
+      context: {},
+    })),
+    open: [],
+    discarded: 97,
+  });
   const d = h.make();
   await d.ready;
-  for (let i = 0; i < 2100; i++) d.record('ui.control', {count: i});
+  for (let count = 2000; count < 2003; count++) d.record('ui.control', {count});
   let report = await d.export();
   assert.equal(report.events.length, 2000);
-  assert.ok(report.discardedEvents >= 100);
+  assert.equal(report.discardedEvents, 100);
+  assert.equal(report.events[0].fields.count, 3);
+  assert.equal(report.events.at(-1).fields.count, 2002);
   h.advance(8 * 24 * 60 * 60 * 1000);
   report = await d.export();
   assert.equal(report.events.length, 0);
+  assert.equal(report.discardedEvents, 2100);
 });
 
 test('disable and clear preserve credentials and approval attempt records', async () => {
@@ -146,12 +163,37 @@ test('clear and recording changes report failed persistence even after an earlie
   await assert.rejects(d.setEnabled(false));
 });
 
-test('a hung diagnostic write does not prevent export of live evidence', async () => {
+async function exportAfterDeadline(t, diagnostics) {
+  const schedule = globalThis.setTimeout;
+  let deadlineScheduled;
+  const scheduled = new Promise((resolve) => {
+    deadlineScheduled = resolve;
+  });
+  t.mock.method(globalThis, 'setTimeout', (callback, milliseconds, ...args) => {
+    const timer = schedule(callback, milliseconds, ...args);
+    deadlineScheduled(milliseconds);
+    return timer;
+  });
+  const report = diagnostics.export();
+  assert.equal(await scheduled, 1500);
+  t.mock.timers.tick(1499);
+  let settled = false;
+  void report.then(() => {
+    settled = true;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  t.mock.timers.tick(1);
+  return report;
+}
+
+test('a hung diagnostic write does not prevent export of live evidence', async (t) => {
+  t.mock.timers.enable({apis: ['setTimeout']});
   const h = harness();
   const d = h.make({storage: {...h.storage, set: () => new Promise(() => {})}});
   await d.ready;
   d.record('ui.stalled', {state: 'loading'});
-  const report = await d.export();
+  const report = await exportAfterDeadline(t, d);
   assert.ok(report.events.some((e) => e.name === 'ui.stalled'));
   assert.ok(report.persistence.pendingSince);
 });
@@ -187,12 +229,13 @@ test('retention removes expired persisted history while recording is disabled', 
   assert.equal(h.values.get('diagnosticHistory').events.length, 0);
 });
 
-test('a pending storage write is not reported as durable', async () => {
+test('a pending storage write is not reported as durable', async (t) => {
+  t.mock.timers.enable({apis: ['setTimeout']});
   const h = harness();
   const d = h.make({storage: {...h.storage, set: () => new Promise(() => {})}});
   await d.ready;
   d.record('worker.start');
-  const report = await d.export();
+  const report = await exportAfterDeadline(t, d);
   assert.equal(report.persistence.upToDate, false);
 });
 

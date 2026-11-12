@@ -1,3 +1,4 @@
+import {timing} from './timing.js';
 export interface DiagnosticContext {
   tabId?: number;
   documentId?: string;
@@ -133,8 +134,8 @@ export function createDiagnostics({
     await operations;
     // Export must still work if diagnostic storage is full or unresponsive.
     const pending = writing;
-    if (pending) await bounded(pending, 1500);
-    if (writing && writing !== pending) await bounded(writing, 1500);
+    if (pending) await bounded(pending, timing.diagnosticStorageMs);
+    if (writing && writing !== pending) await bounded(writing, timing.diagnosticStorageMs);
   }
 
   async function clear() {
@@ -166,7 +167,7 @@ export function createDiagnostics({
 
   async function initialize() {
     try {
-      const stored = await bounded(storage.get(STORAGE_KEY), 1500);
+      const stored = await bounded(storage.get(STORAGE_KEY), timing.diagnosticStorageMs);
       if (stored.timedOut) {
         canPersist = false;
         data.enabled = false;
@@ -283,7 +284,7 @@ export function diagnosticErrorFields(error: unknown): Record<string, unknown> {
   const frame =
     error instanceof Error
       ? error.stack?.match(
-          /chrome-extension:\/\/[a-p]{32}\/(background|content|api|service|diagnostics|options|shared)\.js:(\d+):(\d+)/,
+          /chrome-extension:\/\/[a-p]{32}\/(background|content|api|service|diagnostics|options|shared|watchdog|timing)\.js:(\d+):(\d+)/,
         )
       : undefined;
   return {
@@ -441,6 +442,7 @@ const BOOLEAN_FIELDS = [
   'dirty',
   'enabled',
   'deferredRefresh',
+  'watchdogActive',
 ];
 const CHOICE_FIELDS: Record<string, string[]> = {
   file: [
@@ -451,6 +453,8 @@ const CHOICE_FIELDS: Record<string, string[]> = {
     'diagnostics.js',
     'options.js',
     'shared.js',
+    'watchdog.js',
+    'timing.js',
   ],
   op: [
     'state',

@@ -1,13 +1,33 @@
 import {test, expect, chromium} from '@playwright/test';
-import {mkdtemp, readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, cp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join, resolve} from 'node:path';
+import {writeRuntimeAssets} from '../../scripts/runtime-assets.js';
 
 let context;
 let profile;
 let extensionId;
 let server;
 const sha = 'a'.repeat(40);
+let testExtension;
+
+test.beforeAll(async () => {
+  testExtension = await mkdtemp(join(tmpdir(), 'gh-quickapprove-test-build-'));
+  await cp('dist/extension', testExtension, {recursive: true});
+  await writeRuntimeAssets(testExtension, {
+    uiStallMs: 200,
+    messageStallMs: 200,
+    diagnosticStorageMs: 500,
+    snapshotMs: 500,
+    metadataMs: 1000,
+    apiRequestMs: 5000,
+    optionsRequestMs: 5000,
+  });
+});
+
+test.afterAll(async () => {
+  await rm(testExtension, {recursive: true, force: true});
+});
 
 test.beforeEach(async () => {
   server = {
@@ -26,8 +46,8 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
     channel: 'chromium',
     headless: true,
     args: [
-      `--disable-extensions-except=${resolve('dist/extension')}`,
-      `--load-extension=${resolve('dist/extension')}`,
+      `--disable-extensions-except=${resolve(testExtension)}`,
+      `--load-extension=${resolve(testExtension)}`,
     ],
     viewport,
     deviceScaleFactor,
@@ -53,7 +73,7 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
       return route.fulfill({status: 201, json: review});
     }
     server.readRequests = (server.readRequests ?? 0) + 1;
-    if (server.readDelay) await new Promise((done) => setTimeout(() => done(), server.readDelay));
+    if (server.readGate) await server.readGate;
     if (server.accessDenied) return route.fulfill({status: 403, json: {message: 'Forbidden'}});
     return route.fulfill({json: path.endsWith('/reviews') ? server.reviews : server.pr});
   });
@@ -128,7 +148,6 @@ test('worker sessions persist their exact build fingerprint', async () => {
 });
 
 test('a stalled status check leaves a downloadable private report across worker restart', async () => {
-  test.setTimeout(90_000);
   const settings = await connect();
   const worker = context.serviceWorkers()[0];
   await worker.evaluate(() => {
@@ -145,7 +164,16 @@ test('a stalled status check leaves a downloadable private report across worker 
     'data-state',
     'loading',
   );
-  await page.waitForTimeout(31_000);
+  await expect
+    .poll(async () =>
+      settings.evaluate(async () => {
+        const result = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+        return ['ui.stalled', 'message.stalled'].every((name) =>
+          result.report.events.some((event) => event.name === name),
+        );
+      }),
+    )
+    .toBe(true);
   const download = settings.waitForEvent('download');
   await settings.getByRole('button', {name: 'Export diagnostic report'}).click();
   const file = await download;
@@ -153,7 +181,9 @@ test('a stalled status check leaves a downloadable private report across worker 
   const text = await readFile(await file.path(), 'utf8');
   const report = JSON.parse(text);
   expect(report.events.some((e) => e.name === 'ui.stalled')).toBe(true);
-  expect(report.events.some((e) => e.name === 'message.stalled')).toBe(true);
+  expect(report.events.some((e) => e.name === 'message.stalled' && e.fields.op === 'state')).toBe(
+    true,
+  );
   expect(report.events.some((e) => e.name === 'queue.enter' && e.fields.pending >= 2)).toBe(true);
   expect(report.unfinished.some((e) => e.event.name === 'storage.begin')).toBe(true);
   expect(report.events.some((e) => e.name === 'ui.snapshot' && e.fields.state === 'loading')).toBe(
@@ -198,6 +228,56 @@ test('a stalled status check leaves a downloadable private report across worker 
   expect(cleared.report.enabled).toBe(false);
   await expect(reopened.getByText('Connected as reviewer', {exact: true})).toBeVisible();
   expect(server.posts).toHaveLength(0);
+});
+
+test('a pending control resumes stall diagnostics after its header remounts', async () => {
+  const settings = await connect();
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    const get = chrome.storage.local.get.bind(chrome.storage.local);
+    chrome.storage.local.get = (key) => (key === 'credential' ? new Promise(() => {}) : get(key));
+  });
+  const page = await prPage();
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'loading',
+  );
+  const actions = await page.locator('.actions').evaluateHandle((element) => {
+    element.remove();
+    return element;
+  });
+  await expect
+    .poll(async () =>
+      settings.evaluate(async () => {
+        const result = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+        return result.report.events.some(
+          (event) =>
+            event.name === 'ui.snapshot' &&
+            event.fields.mounted === false &&
+            event.fields.watchdogActive === false,
+        );
+      }),
+    )
+    .toBe(true);
+  const before = await settings.evaluate(async () => {
+    const result = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+    return result.report.events.filter((event) => event.name === 'ui.stalled').length;
+  });
+  await page.evaluate((element) => document.querySelector('.pr-toolbar').append(element), actions);
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'loading',
+  );
+  await expect
+    .poll(async () =>
+      settings.evaluate(async () => {
+        const result = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+        return result.report.events.filter((event) => event.name === 'ui.stalled').length;
+      }),
+    )
+    .toBeGreaterThan(before);
+  expect(server.posts).toHaveLength(0);
+  expect(server.readRequests ?? 0).toBe(0);
 });
 
 test('one native click approves pinned commit and keeps toolbar placement', async () => {
@@ -522,19 +602,25 @@ test('failed token removal keeps the connection and exposes an actionable error'
 
 test('ongoing page updates cannot starve a slow approval-state response', async () => {
   await connect();
-  server.readDelay = 100;
-  const page = await context.newPage();
-  await page.addInitScript(() => {
-    document.addEventListener('DOMContentLoaded', () => {
-      const activity = document.createElement('div');
-      document.body.append(activity);
-      let updates = 0;
-      window.setInterval(() => {
-        activity.textContent = `Activity update ${++updates}`;
-      }, 20);
-    });
+  let releaseRead;
+  server.readGate = new Promise((done) => {
+    releaseRead = done;
   });
+  const page = await context.newPage();
   await page.goto('https://github.com/example/widget/pull/23');
+  await expect(page.locator('[data-quickapprove-root] button')).toHaveAttribute(
+    'data-state',
+    'loading',
+  );
+  await page.evaluate(async () => {
+    const activity = document.createElement('div');
+    document.body.append(activity);
+    for (let count = 0; count < 5; count++) {
+      activity.textContent = `Activity update ${count}`;
+      await new Promise((done) => requestAnimationFrame(() => done()));
+    }
+  });
+  releaseRead();
   await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
   expect(server.readRequests).toBeLessThan(6);
   expect(server.posts).toHaveLength(0);

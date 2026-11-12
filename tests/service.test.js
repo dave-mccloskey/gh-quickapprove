@@ -9,12 +9,24 @@ test('diagnostics identify queue wait separately from execution without exposing
     release = done;
   });
   let first = true;
+  let pullStarted;
+  const pulling = new Promise((resolve) => {
+    pullStarted = resolve;
+  });
+  let secondEntered;
+  const queued = new Promise((resolve) => {
+    secondEntered = resolve;
+  });
   const h = harness({
-    trace: (name, fields) => events.push({name, fields}),
+    trace: (name, fields) => {
+      events.push({name, fields});
+      if (name === 'queue.enter' && fields.pending === 2) secondEntered();
+    },
     api: {
       pull: async () => {
         if (first) {
           first = false;
+          pullStarted();
           await gate;
         }
         return {id: 99, state: 'open', merged: false, user: {id: 8}, head: {sha: 'a'.repeat(40)}};
@@ -23,9 +35,9 @@ test('diagnostics identify queue wait separately from execution without exposing
   });
   await h.save();
   const one = h.state();
-  await new Promise((done) => setTimeout(done, 0));
+  await pulling;
   const two = h.state();
-  await new Promise((done) => setTimeout(done, 0));
+  await queued;
   assert.equal(events.filter((e) => e.name === 'queue.enter').length, 2);
   assert.equal(events.filter((e) => e.name === 'queue.start').length, 1);
   assert.equal(
@@ -131,16 +143,21 @@ test('bad token candidates preserve the working credential and sanitize errors',
 
 test('token removal prevents a late validation from restoring it', async () => {
   let resolve;
+  let validating;
+  const started = new Promise((done) => {
+    validating = done;
+  });
   const h = harness({
     api: {
       user: () =>
         new Promise((done) => {
           resolve = done;
+          validating();
         }),
     },
   });
   const save = h.save();
-  await new Promise((done) => setImmediate(() => done()));
+  await started;
   await h.service.handle({op: 'removeToken'}, h.options);
   resolve(h.user);
   assert.equal((await save).kind, 'canceled');
@@ -334,7 +351,6 @@ test('a superseded token save cannot erase a newer successful save', async () =>
   const first = h.save('first-token');
   await writing;
   const second = h.save('second-token');
-  await new Promise((done) => setImmediate(() => done()));
   release();
   await Promise.all([first, second]);
   assert.equal(h.values.get('credential')?.token, 'second-token');
@@ -411,7 +427,6 @@ test('stale state reconciliation cannot erase a newer uncertain attempt', async 
   const stale = h.state();
   await reconciling;
   const approval = h.approve();
-  await new Promise((done) => setImmediate(() => done()));
   release();
   await Promise.all([stale, approval]);
   assert.equal((await h.state()).kind, 'uncertain');
