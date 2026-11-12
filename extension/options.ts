@@ -130,7 +130,7 @@ async function saveToken() {
     }
   } catch {
     if (revision === actionRevision)
-      showError('Could not save the token. Check your connection and try again.');
+      showError('Could not confirm the token was saved. Reload settings to check the connection.');
   } finally {
     if (revision === saveRevision) {
       save.disabled = false;
@@ -153,7 +153,10 @@ async function removeToken() {
       input.value = '';
     } else showError(result.label);
   } catch {
-    if (revision === actionRevision) showError('Could not remove the token. Try again.');
+    if (revision === actionRevision)
+      showError(
+        'Could not confirm the token was removed. Reload settings to check the connection.',
+      );
   } finally {
     if (revision === removeRevision) remove.disabled = false;
   }
@@ -182,7 +185,21 @@ function showError(message: string) {
 }
 
 async function send(message: ExtensionMessage): Promise<ViewState> {
-  return chrome.runtime.sendMessage({...message, traceId: crypto.randomUUID()});
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      chrome.runtime.sendMessage({...message, traceId: crypto.randomUUID()}),
+      new Promise<never>((resolve, reject) => {
+        void resolve;
+        timer = setTimeout(
+          () => reject(new Error('Settings request timed out')),
+          timing.optionsRequestMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function requiredElement<T extends HTMLElement>(id: string, type: {new (): T}): T {

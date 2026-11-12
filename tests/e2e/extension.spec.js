@@ -1130,3 +1130,36 @@ for (const delayed of ['setToken', 'removeToken']) {
     await expect(settings.getByRole('alert')).toBeHidden();
   });
 }
+
+for (const op of ['setToken', 'removeToken']) {
+  test(`a lost ${op} reply re-enables settings controls and reports an unknown outcome`, async () => {
+    const settings = await connect();
+    await settings.evaluate(async (operation) => {
+      const {timing} = await import(chrome.runtime.getURL('timing.js'));
+      timing.optionsRequestMs = 100;
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = (...args) => {
+        const response = send(...args);
+        return args[0]?.op === operation ? new Promise(() => {}) : response;
+      };
+    }, op);
+    if (op === 'setToken') {
+      await settings.getByLabel('GitHub token').fill('replacement-token');
+      await settings.getByRole('button', {name: 'Save token', exact: true}).click();
+    } else await settings.getByRole('button', {name: 'Remove token', exact: true}).click();
+    await expect(settings.getByRole('alert')).toBeVisible();
+    await expect(
+      settings.getByRole('button', {
+        name: op === 'setToken' ? 'Save token' : 'Remove token',
+        exact: true,
+      }),
+    ).toBeEnabled();
+    await settings.reload();
+    await expect(
+      settings.getByText(
+        op === 'setToken' ? 'Connected as reviewer' : 'Add a token to get started.',
+        {exact: true},
+      ),
+    ).toBeVisible();
+  });
+}
