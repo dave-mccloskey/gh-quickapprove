@@ -1053,3 +1053,80 @@ for (const action of ['leaving the PR', 'dismissing the panel']) {
     expect(server.posts).toHaveLength(1);
   });
 }
+
+for (const candidate of ['valid', 'invalid']) {
+  test(`late initial settings status respects a ${candidate} token save`, async () => {
+    if (candidate === 'invalid') await connect();
+    const settings = await context.newPage();
+    await settings.addInitScript(() => {
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      chrome.runtime.sendMessage = (...args) => {
+        const response = send(...args);
+        return args[0]?.op === 'status'
+          ? response.then(
+              (result) =>
+                new Promise((resolve) => {
+                  window.releaseInitialStatus = () => resolve(result);
+                }),
+            )
+          : response;
+      };
+    });
+    await settings.goto(`chrome-extension://${extensionId}/options.html`);
+    await expect
+      .poll(() => settings.evaluate(() => typeof window.releaseInitialStatus))
+      .toBe('function');
+    await settings.getByLabel('GitHub token').fill(candidate === 'valid' ? 'fake-token' : 'bad');
+    await settings.getByRole('button', {name: 'Save token', exact: true}).click();
+    if (candidate === 'valid')
+      await expect(settings.getByText('Connected as reviewer', {exact: true})).toBeVisible();
+    else await expect(settings.getByRole('alert')).toBeVisible();
+    await settings.evaluate(() => window.releaseInitialStatus());
+    await expect(settings.getByText('Connected as reviewer', {exact: true})).toBeVisible();
+    if (candidate === 'invalid') await expect(settings.getByRole('alert')).toBeVisible();
+  });
+}
+
+for (const delayed of ['setToken', 'removeToken']) {
+  test(`late ${delayed} replies cannot overwrite a newer credential action`, async () => {
+    const settings = await connect();
+    await settings.evaluate((op) => {
+      const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+      let held = false;
+      chrome.runtime.sendMessage = (...args) => {
+        const response = send(...args);
+        if (args[0]?.op !== op || held) return response;
+        held = true;
+        return response.then(
+          (result) =>
+            new Promise((resolve) => {
+              window.releaseOldCredentialAction = () => resolve(result);
+            }),
+        );
+      };
+    }, delayed);
+    if (delayed === 'setToken') {
+      await settings.getByLabel('GitHub token').fill('first-replacement');
+      await settings.getByRole('button', {name: 'Save token', exact: true}).click();
+    } else await settings.getByRole('button', {name: 'Remove token', exact: true}).click();
+    await expect
+      .poll(() => settings.evaluate(() => typeof window.releaseOldCredentialAction))
+      .toBe('function');
+    if (delayed === 'setToken') {
+      await settings.getByRole('button', {name: 'Remove token', exact: true}).click();
+      await expect(settings.getByText('Add a token to get started.', {exact: true})).toBeVisible();
+    } else {
+      await settings.getByLabel('GitHub token').fill('newest-replacement');
+      await settings.getByRole('button', {name: 'Save token', exact: true}).click();
+      await expect(settings.getByText('Connected as reviewer', {exact: true})).toBeVisible();
+    }
+    await settings.evaluate(() => window.releaseOldCredentialAction());
+    await expect(
+      settings.getByText(
+        delayed === 'setToken' ? 'Add a token to get started.' : 'Connected as reviewer',
+        {exact: true},
+      ),
+    ).toBeVisible();
+    await expect(settings.getByRole('alert')).toBeHidden();
+  });
+}

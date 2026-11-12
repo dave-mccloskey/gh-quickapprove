@@ -10,6 +10,10 @@ const status = requiredElement('connection-status', HTMLElement);
 const badge = requiredElement('connection-badge', HTMLElement);
 const error = requiredElement('error', HTMLElement);
 const returnSection = requiredElement('return', HTMLElement);
+let actionRevision = 0;
+let connectionRevision = 0;
+let saveRevision = 0;
+let removeRevision = 0;
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -95,48 +99,63 @@ async function diagnosticRequest(
 }
 
 async function loadStatus() {
+  const action = actionRevision;
+  const connection = connectionRevision;
   try {
     const result = await send({op: 'status'});
+    if (connection !== connectionRevision) return;
     if (['connected', 'invalid', 'setup'].includes(result.kind)) renderStatus(result);
-    else showError(result.label);
+    else if (action === actionRevision) showError(result.label);
   } catch {
-    showError('Could not load settings. Reload the extension and try again.');
+    if (action === actionRevision)
+      showError('Could not load settings. Reload the extension and try again.');
   }
 }
 
 async function saveToken() {
+  const revision = ++actionRevision;
+  saveRevision = revision;
   save.disabled = true;
   save.textContent = 'Checking token…';
   error.hidden = true;
   try {
     const result = await send({op: 'setToken', token: input.value});
+    if (revision !== actionRevision) return;
     if (result.kind === 'connected') {
+      connectionRevision++;
       input.value = '';
       renderStatus(result);
     } else {
       showError(result.label);
     }
   } catch {
-    showError('Could not save the token. Check your connection and try again.');
+    if (revision === actionRevision)
+      showError('Could not save the token. Check your connection and try again.');
   } finally {
-    save.disabled = false;
-    save.textContent = 'Save token';
+    if (revision === saveRevision) {
+      save.disabled = false;
+      save.textContent = 'Save token';
+    }
   }
 }
 
 async function removeToken() {
+  const revision = ++actionRevision;
+  removeRevision = revision;
   remove.disabled = true;
   error.hidden = true;
   try {
     const result = await send({op: 'removeToken'});
+    if (revision !== actionRevision) return;
     if (result.kind === 'setup') {
+      connectionRevision++;
       renderStatus(result);
       input.value = '';
     } else showError(result.label);
   } catch {
-    showError('Could not remove the token. Try again.');
+    if (revision === actionRevision) showError('Could not remove the token. Try again.');
   } finally {
-    remove.disabled = false;
+    if (revision === removeRevision) remove.disabled = false;
   }
 }
 
