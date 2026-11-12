@@ -77,21 +77,31 @@ const service = createService({
   notify: async () => {
     const spanId = crypto.randomUUID();
     const start = performance.now();
+    let outcome = 'ok';
     diagnostics.record('notify.begin', {spanId});
     try {
-      const tabs = await chrome.tabs.query({url: 'https://github.com/*'});
+      const tabs = await withTimeout(
+        chrome.tabs.query({url: 'https://github.com/*'}),
+        timing.notificationMs,
+      );
       await Promise.all(
         tabs.map(async (tab) => {
           if (tab.id === undefined) return;
           try {
-            await chrome.tabs.sendMessage(tab.id, {op: 'refreshState'}, {frameId: 0});
+            await withTimeout(
+              chrome.tabs.sendMessage(tab.id, {op: 'refreshState'}, {frameId: 0}),
+              timing.notificationMs,
+            );
           } catch {
-            /* A closed or disconnected tab cannot receive a notification. */
+            outcome = 'unavailable';
           }
         }),
       );
+    } catch {
+      // Notifications must not change the outcome of a completed user action.
+      outcome = 'unavailable';
     } finally {
-      diagnostics.record('notify.end', {spanId, durationMs: performance.now() - start});
+      diagnostics.record('notify.end', {spanId, outcome, durationMs: performance.now() - start});
     }
   },
   openSettings: async () => chrome.runtime.openOptionsPage(),
@@ -347,7 +357,7 @@ async function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promis
       promise,
       new Promise<never>((resolve, reject) => {
         void resolve;
-        timer = setTimeout(() => reject(new Error('Snapshot unavailable')), milliseconds);
+        timer = setTimeout(() => reject(new Error('Request timed out')), milliseconds);
       }),
     ]);
   } finally {

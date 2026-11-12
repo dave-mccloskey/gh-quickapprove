@@ -22,6 +22,7 @@ test.beforeAll(async () => {
     metadataMs: 1000,
     apiRequestMs: 5000,
     optionsRequestMs: 5000,
+    notificationMs: 200,
   });
 });
 
@@ -939,4 +940,44 @@ test('restoring a cached PR replaces a state request whose reply was lost', asyn
   );
   await expect(control).toHaveAttribute('data-state', 'available');
   expect(server.posts).toHaveLength(0);
+});
+
+test('notification failures cannot turn a successful approval into an error', async () => {
+  await connect();
+  const page = await prPage();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  await context.serviceWorkers()[0].evaluate(() => {
+    chrome.tabs.query = async () => {
+      throw new Error('tab lookup failed');
+    };
+  });
+  await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(1);
+});
+
+test('notification failures cannot leave a removed token displayed as connected', async () => {
+  const settings = await connect();
+  await context.serviceWorkers()[0].evaluate(() => {
+    chrome.tabs.query = async () => {
+      throw new Error('tab lookup failed');
+    };
+  });
+  await settings.getByRole('button', {name: 'Remove token', exact: true}).click();
+  await expect(settings.getByText('Add a token to get started.', {exact: true})).toBeVisible();
+  await expect(settings.getByRole('alert')).toBeHidden();
+});
+
+test('an unresponsive notification recipient cannot keep an approval busy', async () => {
+  await connect();
+  const page = await prPage();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  await context.serviceWorkers()[0].evaluate(() => {
+    const send = chrome.tabs.sendMessage.bind(chrome.tabs);
+    chrome.tabs.sendMessage = (...args) =>
+      args[1]?.op === 'refreshState' ? new Promise(() => {}) : send(...args);
+  });
+  await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(1);
 });
