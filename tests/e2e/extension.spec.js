@@ -17,6 +17,7 @@ test.beforeAll(async () => {
   await writeRuntimeAssets(testExtension, {
     uiStallMs: 200,
     messageStallMs: 200,
+    messageRequestMs: 5000,
     diagnosticStorageMs: 500,
     snapshotMs: 500,
     metadataMs: 1000,
@@ -1161,5 +1162,47 @@ for (const op of ['setToken', 'removeToken']) {
         {exact: true},
       ),
     ).toBeVisible();
+  });
+}
+
+for (const op of ['state', 'approve']) {
+  test(`a lost PR ${op} reply has a bounded wait and never repeats approval`, async () => {
+    await connect();
+    const page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
+    const worlds = [];
+    cdp.on('Runtime.executionContextCreated', ({context: execution}) => worlds.push(execution));
+    await cdp.send('Runtime.enable');
+    await page.goto('https://github.com/example/widget/pull/23');
+    await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+    const isolated = worlds.find((world) => world.origin === `chrome-extension://${extensionId}`);
+    await cdp.send('Runtime.evaluate', {
+      contextId: isolated.id,
+      expression: `{
+        quickApproveTiming.messageRequestMs = 100;
+        const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+        let dropped = false;
+        chrome.runtime.sendMessage = (...args) => {
+          const response = send(...args);
+          if (args[0]?.op === '${op}' && !dropped) { dropped = true; return new Promise(() => {}); }
+          return response;
+        };
+      }`,
+    });
+    const control = page.locator('[data-quickapprove-root] button');
+    if (op === 'state') {
+      await page.evaluate(() => history.replaceState({}, '', '?read-timeout'));
+      await expect(control).toHaveAttribute('data-state', 'error');
+      await control.click();
+      await page.getByRole('button', {name: 'Retry', exact: true}).click();
+      await expect(control).toHaveAttribute('data-state', 'available');
+    } else {
+      await control.click();
+      await expect(control).toHaveAttribute('data-state', 'uncertain');
+      await page.getByRole('button', {name: 'Recheck', exact: true}).click();
+      await expect(control).toHaveAttribute('data-state', 'approved');
+    }
+    await expect(control).toHaveAttribute('aria-busy', 'false');
+    expect(server.posts).toHaveLength(op === 'approve' ? 1 : 0);
   });
 }

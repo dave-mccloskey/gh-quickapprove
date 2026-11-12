@@ -566,8 +566,22 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     }
   }
 
-  function send(message: Record<string, unknown>, traceId = crypto.randomUUID()) {
-    return chrome.runtime.sendMessage({...message, traceId});
+  async function send(message: Record<string, unknown>, traceId = crypto.randomUUID()) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        chrome.runtime.sendMessage({...message, traceId}),
+        new Promise<never>((resolve, reject) => {
+          void resolve;
+          timer = setTimeout(
+            () => reject(new Error('Quick Approve request timed out')),
+            quickApproveTiming.messageRequestMs,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   start();

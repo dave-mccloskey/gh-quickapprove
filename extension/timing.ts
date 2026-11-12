@@ -2,6 +2,7 @@
 export const timing = {
   uiStallMs: 30_000,
   messageStallMs: 30_000,
+  messageRequestMs: 45_000,
   diagnosticStorageMs: 1500,
   snapshotMs: 1500,
   notificationMs: 1500,
