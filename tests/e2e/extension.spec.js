@@ -1016,3 +1016,40 @@ test('a rejected approval from an old PR cannot put its warning on a new PR', as
   );
   expect(server.posts).toHaveLength(0);
 });
+
+for (const action of ['leaving the PR', 'dismissing the panel']) {
+  test(`a late recovery recheck cannot reopen its panel after ${action}`, async () => {
+    const settings = await connect();
+    server.losePostResponse = true;
+    server.hidePostedReview = true;
+    const page = await prPage();
+    await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
+    await expect(page.getByRole('button', {name: 'Recheck', exact: true})).toBeVisible();
+    let release;
+    server.readGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const before = server.readRequests;
+    await page.getByRole('button', {name: 'Recheck', exact: true}).click();
+    await expect.poll(() => server.readRequests).toBeGreaterThan(before);
+    if (action === 'leaving the PR') {
+      await page.evaluate(() => history.pushState({}, '', '/example/widget/labels'));
+      await expect(page.locator('[data-quickapprove-root]')).toHaveCount(0);
+    } else {
+      await page.getByRole('button', {name: 'Dismiss', exact: true}).click();
+    }
+    release();
+    await expect
+      .poll(async () =>
+        settings.evaluate(async () => {
+          const {report} = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+          return report.events.some(
+            (event) => event.name === 'ui.refresh.end' && event.fields.op === 'recheck',
+          );
+        }),
+      )
+      .toBe(true);
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(server.posts).toHaveLength(1);
+  });
+}

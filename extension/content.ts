@@ -441,6 +441,8 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     panel.className = 'qa-panel';
     panel.setAttribute('popover', 'manual');
     panel.role = 'alert';
+    const activePanel = panel;
+    const panelGeneration = generation;
     const text = document.createElement('p');
     text.textContent = current.label;
     panel.append(text);
@@ -457,11 +459,11 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       panel.append(history);
       panelAction('Recheck', async () => {
         await refresh('recheck');
-        showPanel();
+        if (panel === activePanel && generation === panelGeneration) showPanel();
       });
       panelAction('Allow another attempt', async () => {
         await refresh('resetAttempt');
-        closePanel();
+        if (panel === activePanel && generation === panelGeneration) closePanel();
       });
     } else {
       panelAction('Retry', async () => {
