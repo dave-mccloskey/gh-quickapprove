@@ -29,7 +29,14 @@ test('diagnostics identify queue wait separately from execution without exposing
           pullStarted();
           await gate;
         }
-        return {id: 99, state: 'open', merged: false, user: {id: 8}, head: {sha: 'a'.repeat(40)}};
+        return {
+          id: 99,
+          nodeId: 'PR_test',
+          state: 'open',
+          merged: false,
+          user: {id: 8},
+          head: {sha: 'a'.repeat(40)},
+        };
       },
     },
   });
@@ -54,7 +61,14 @@ function harness(overrides = {}) {
   const values = new Map();
   const writes = [];
   const user = {id: 7, login: 'reviewer'};
-  const pr = {id: 99, state: 'open', merged: false, user: {id: 8}, head: {sha: 'a'.repeat(40)}};
+  const pr = {
+    id: 99,
+    nodeId: 'PR_test',
+    state: 'open',
+    merged: false,
+    user: {id: 8},
+    head: {sha: 'a'.repeat(40)},
+  };
   let reviews = [];
   const storage = {
     get: async (key) => structuredClone(values.get(key)),
@@ -200,6 +214,7 @@ test('pins a single immediate approval to the loaded SHA and journals before POS
   assert.equal((await h.approve()).kind, 'approved');
   assert.equal(h.writes.length, 1);
   assert.equal(h.writes[0].sha, 'a'.repeat(40));
+  assert.equal(h.writes[0].target, 'PR_test');
   assert.equal((await h.approve()).kind, 'approved');
   assert.equal(h.writes.length, 1);
 });

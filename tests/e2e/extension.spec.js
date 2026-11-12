@@ -31,11 +31,19 @@ test.afterAll(async () => {
 
 test.beforeEach(async () => {
   server = {
-    user: {id: 7, login: 'reviewer'},
+    user: {databaseId: 7, login: 'reviewer'},
     reviews: [],
     posts: [],
+    requests: [],
     invalid: false,
-    pr: {id: 99, state: 'open', merged: false, user: {id: 8, login: 'contributor'}, head: {sha}},
+    pr: {
+      id: 'PR_99',
+      fullDatabaseId: '99',
+      state: 'OPEN',
+      merged: false,
+      author: {databaseId: 8},
+      headRefOid: sha,
+    },
   };
   profile = await mkdtemp(join(tmpdir(), 'gh-quickapprove-'));
   await launchContext();
@@ -61,21 +69,50 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
   await context.route('https://api.github.com/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
+    const payload = request.postDataJSON();
+    server.requests.push({path, method: request.method(), ...payload});
+    expect(path).toBe('/graphql');
+    expect(request.method()).toBe('POST');
+    const operation = payload.query.match(/(?:query|mutation)\s+(QuickApprove\w+)/)?.[1];
     if (server.invalid || request.headers().authorization === 'Bearer bad')
       return route.fulfill({status: 401, json: {message: 'Bad credentials'}});
-    if (path === '/user') return route.fulfill({json: server.user});
-    if (request.method() === 'POST') {
-      server.posts.push(request.postDataJSON());
-      const review = {id: 101, user: server.user, state: 'APPROVED', commit_id: sha};
+    if (operation === 'QuickApproveUser')
+      return route.fulfill({json: {data: {viewer: server.user}}});
+    if (operation === 'QuickApproveApprove') {
+      server.posts.push(payload.variables);
+      const review = {
+        fullDatabaseId: '101',
+        author: server.user,
+        state: 'APPROVED',
+        commit: {oid: payload.variables.commitOid},
+      };
       if (!server.hidePostedReview) server.reviews.push(review);
       if (server.losePostResponse) return route.abort('failed');
       if (server.postGate) await server.postGate;
-      return route.fulfill({status: 201, json: review});
+      return route.fulfill({json: {data: {addPullRequestReview: {pullRequestReview: review}}}});
     }
     server.readRequests = (server.readRequests ?? 0) + 1;
     if (server.readGate) await server.readGate;
     if (server.accessDenied) return route.fulfill({status: 403, json: {message: 'Forbidden'}});
-    return route.fulfill({json: path.endsWith('/reviews') ? server.reviews : server.pr});
+    if (operation === 'QuickApprovePull')
+      return route.fulfill({json: {data: {repository: {pullRequest: server.pr}}}});
+    expect(operation).toBe('QuickApproveReviews');
+    return route.fulfill({
+      json: {
+        data: {
+          repository: {
+            pullRequest: {
+              reviews: {
+                nodes: server.reviews.filter(
+                  (review) => review.author?.login === payload.variables.author,
+                ),
+                pageInfo: {hasNextPage: false, endCursor: null},
+              },
+            },
+          },
+        },
+      },
+    });
   });
 }
 
@@ -293,7 +330,49 @@ test('one native click approves pinned commit and keeps toolbar placement', asyn
     page.getByRole('button', {name: 'You approved this PR', exact: true}),
   ).toHaveAttribute('aria-disabled', 'true');
   await page.screenshot({path: 'test-results/pr-approved.png'});
-  expect(server.posts).toEqual([{event: 'APPROVE', commit_id: sha}]);
+  expect(server.posts).toEqual([{pullRequestId: 'PR_99', commitOid: sha}]);
+  expect(
+    new Set(server.requests.map(({query}) => query.match(/(?:query|mutation)\s+(\w+)/)[1])),
+  ).toEqual(
+    new Set(['QuickApproveUser', 'QuickApprovePull', 'QuickApproveReviews', 'QuickApproveApprove']),
+  );
+  for (const request of server.requests) {
+    expect(request.path).toBe('/graphql');
+    expect(request.method).toBe('POST');
+    expect(request.query).not.toMatch(/\b(?:location|body|title)\b/);
+    if (/query QuickApprovePull\b/.test(request.query))
+      expect(request.variables).toEqual({owner: 'example', name: 'widget', number: 23});
+    if (/query QuickApproveReviews\b/.test(request.query))
+      expect(request.variables).toEqual({
+        owner: 'example',
+        name: 'widget',
+        number: 23,
+        cursor: null,
+        author: 'reviewer',
+      });
+  }
+});
+
+test('review state belongs to the connected reviewer', async () => {
+  await connect();
+  server.reviews = [
+    {
+      fullDatabaseId: '1',
+      author: {databaseId: 9, login: 'other-reviewer'},
+      state: 'CHANGES_REQUESTED',
+      commit: {oid: sha},
+    },
+    {fullDatabaseId: '2', author: server.user, state: 'APPROVED', commit: {oid: sha}},
+  ];
+  const page = await prPage();
+  await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
+  const reviews = server.requests.filter(({query}) => /query QuickApproveReviews\b/.test(query));
+  expect(reviews.length).toBeGreaterThan(0);
+  for (const request of reviews) {
+    expect(request.variables.author).toBe('reviewer');
+    expect(request.query).toMatch(/author:\s*\$author/);
+  }
+  expect(server.posts).toHaveLength(0);
 });
 
 test('synthetic clicks never submit and keyboard activation works', async () => {
@@ -317,13 +396,14 @@ for (const [kind, label] of [
 ]) {
   test(`${kind} state is visible and disabled without hover`, async () => {
     await connect();
-    if (kind === 'own') server.pr.user = server.user;
+    if (kind === 'own') server.pr.author = server.user;
     if (kind === 'merged') {
-      server.pr.state = 'closed';
+      server.pr.state = 'MERGED';
       server.pr.merged = true;
     }
-    if (kind === 'closed') server.pr.state = 'closed';
-    if (kind === 'pending') server.reviews = [{id: 1, user: server.user, state: 'PENDING'}];
+    if (kind === 'closed') server.pr.state = 'CLOSED';
+    if (kind === 'pending')
+      server.reviews = [{fullDatabaseId: '1', author: server.user, state: 'PENDING'}];
     const page = await prPage();
     const button = page.getByRole('button', {name: label, exact: true});
     await expect(button).toHaveAttribute('aria-disabled', 'true');
@@ -568,7 +648,7 @@ test('captures ready-to-upload store screenshots with generic accounts and repos
   await approved.hover();
   await expect(page.getByText('You approved this PR', {exact: true})).toBeVisible();
   await page.screenshot({path: 'test-results/store-02-approved.png'});
-  expect(server.posts).toEqual([{event: 'APPROVE', commit_id: sha}]);
+  expect(server.posts).toEqual([{pullRequestId: 'PR_99', commitOid: sha}]);
 });
 
 test('navigating within a PR during submission does not leave the button busy', async () => {
@@ -670,10 +750,12 @@ test('hover and keyboard tooltip remain visible outside a clipped PR header', as
 
 test('an approved open PR changes to purple when GitHub marks it merged in place', async () => {
   await connect();
-  server.reviews = [{id: 1, user: server.user, state: 'APPROVED', commit_id: sha}];
+  server.reviews = [
+    {fullDatabaseId: '1', author: server.user, state: 'APPROVED', commit: {oid: sha}},
+  ];
   const page = await prPage();
   await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
-  server.pr.state = 'closed';
+  server.pr.state = 'MERGED';
   server.pr.merged = true;
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Merged';
@@ -690,7 +772,9 @@ test('an approved open PR changes to purple when GitHub marks it merged in place
 
 test('an accessible PR-state label change refreshes the approved button', async () => {
   await connect();
-  server.reviews = [{id: 1, user: server.user, state: 'APPROVED', commit_id: sha}];
+  server.reviews = [
+    {fullDatabaseId: '1', author: server.user, state: 'APPROVED', commit: {oid: sha}},
+  ];
   const page = await prPage();
   await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
   await page.evaluate(() => {
@@ -699,7 +783,7 @@ test('an accessible PR-state label change refreshes the approved button', async 
     status.textContent = 'PR state';
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').replaceWith(status);
   });
-  server.pr.state = 'closed';
+  server.pr.state = 'MERGED';
   server.pr.merged = true;
   await page
     .getByRole('button', {name: 'Pull request state: Open', exact: true})
@@ -717,7 +801,7 @@ test('a merge arriving during approval wins over the late approval response', as
   const page = await prPage();
   await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
   await expect.poll(() => server.posts.length).toBe(1);
-  server.pr.state = 'closed';
+  server.pr.state = 'MERGED';
   server.pr.merged = true;
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Merged';
@@ -732,10 +816,12 @@ test('a merge arriving during approval wins over the late approval response', as
 
 test('in-place close and reopen replace the approved and closed button states', async () => {
   await connect();
-  server.reviews = [{id: 1, user: server.user, state: 'APPROVED', commit_id: sha}];
+  server.reviews = [
+    {fullDatabaseId: '1', author: server.user, state: 'APPROVED', commit: {oid: sha}},
+  ];
   const page = await prPage();
   await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
-  server.pr.state = 'closed';
+  server.pr.state = 'CLOSED';
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Closed';
   });
@@ -743,7 +829,7 @@ test('in-place close and reopen replace the approved and closed button states', 
     'aria-disabled',
     'true',
   );
-  server.pr.state = 'open';
+  server.pr.state = 'OPEN';
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Open';
   });
@@ -751,12 +837,12 @@ test('in-place close and reopen replace the approved and closed button states', 
     page.getByRole('button', {name: 'You approved this PR', exact: true}),
   ).toHaveAttribute('aria-disabled', 'true');
   server.reviews = [];
-  server.pr.state = 'closed';
+  server.pr.state = 'CLOSED';
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Closed';
   });
   await expect(page.getByRole('button', {name: 'This PR is closed', exact: true})).toBeVisible();
-  server.pr.state = 'open';
+  server.pr.state = 'OPEN';
   await page.evaluate(() => {
     document.querySelector('[class^="prc-StateLabel-StateLabel"]').textContent = 'Open';
   });

@@ -3,14 +3,14 @@
   "permissionJustifications": {
     "storage": "Stores the user-supplied GitHub token, validated account identity, and approval attempt records locally in this Chrome profile. Attempt records prevent duplicate approvals when a request's result is uncertain. Also stores bounded local diagnostic history and the private key for pseudonymous context IDs; reports are exported only at the user's request.",
     "https://github.com/*": "Reads the signed-in GitHub username and current pull request identity and inserts the approval control in the new PR header. GitHub's client-side navigation requires the script to load before navigation to a PR. It does not scan unrelated websites or collect general browsing history.",
-    "https://api.github.com/*": "Validates the user's token, reads the current PR and its reviews, and submits an approval after the user clicks Quick approve. All requests use HTTPS and go directly to GitHub."
+    "https://api.github.com/*": "Validates the user's token, reads the current PR and the user's own reviews, and submits an approval after the user clicks Quick approve. All requests use HTTPS and go directly to GitHub."
   },
   "usesRemoteCode": false,
   "remoteCodeJustification": "All executable code is bundled in the extension. It does not load or execute remote scripts or WebAssembly.",
   "dataUsage": {
     "Personally identifiable information": {
       "handled": true,
-      "details": "GitHub account usernames and IDs, including account information returned by GitHub's API."
+      "details": "The signed-in GitHub username read from the current page, the token owner's ID and username, and PR and review author IDs selected in GitHub GraphQL API responses."
     },
     "Health information": {
       "handled": false
@@ -23,12 +23,12 @@
       "details": "The user's personal access token is stored locally and sent only to GitHub's API."
     },
     "Personal communications": {
-      "handled": true,
-      "details": "GitHub's PR and review API responses can contain written descriptions and review comments. The extension uses review metadata to determine approval state; it does not retain comment bodies."
+      "handled": false,
+      "details": "GitHub GraphQL requests select review metadata without requesting or receiving pull request descriptions or review comment bodies."
     },
     "Location": {
-      "handled": true,
-      "details": "GitHub's authenticated-user response may include an optional location entered in the user's GitHub profile. The extension does not use or retain that field and does not request device geolocation."
+      "handled": false,
+      "details": "GitHub GraphQL requests do not request or receive profile location. The extension does not request device geolocation."
     },
     "Web history": {
       "handled": true,
@@ -40,7 +40,7 @@
     },
     "Website content": {
       "handled": true,
-      "details": "GitHub PR identifiers, commit IDs, state, account identity, and review information are read from the current page and GitHub API responses, including private repositories the user authorizes."
+      "details": "The current GitHub PR identity is read from the page. GraphQL requests select PR IDs, state, merged status, head commit ID, author ID, and the user's own review IDs, state, author ID, and commit IDs, including private repositories the user authorizes. Approval responses contain only the submitted review's ID and state."
     }
   },
   "certifications": {

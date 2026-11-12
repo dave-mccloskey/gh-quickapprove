@@ -14,6 +14,7 @@ export interface GitHubUser {
 
 export interface PullRequest {
   id: number;
+  nodeId: string;
   state: string;
   merged: boolean;
   user: GitHubUser;
@@ -70,8 +71,13 @@ export interface MessageSender {
 export interface GitHubApi {
   user(token: string, traceId?: string): Promise<GitHubUser>;
   pull(target: PrTarget, token: string, traceId?: string): Promise<PullRequest>;
-  reviews(target: PrTarget, token: string, traceId?: string): Promise<Review[]>;
-  approve(target: PrTarget, sha: string, token: string, traceId?: string): Promise<Review>;
+  reviews(target: PrTarget, token: string, author: string, traceId?: string): Promise<Review[]>;
+  approve(
+    pullRequestId: string,
+    sha: string,
+    token: string,
+    traceId?: string,
+  ): Promise<Pick<Review, 'id' | 'state'>>;
 }
 
 export interface ExtensionStorage {

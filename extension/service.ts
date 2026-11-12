@@ -145,7 +145,12 @@ export function createService({
           {traceId: message.traceId, phase: 'dispatch'},
           target.key,
         );
-        const review = await api.approve(target, message.sha, credential.token, message.traceId);
+        const review = await api.approve(
+          snapshot.pr.nodeId,
+          message.sha,
+          credential.token,
+          message.traceId,
+        );
         if (!Number.isSafeInteger(review.id) || review.state !== 'APPROVED')
           return uncertain(message.sha);
         await storage.remove(snapshot.attemptKey);
@@ -239,10 +244,14 @@ export function createService({
   ) {
     emitDiagnostic(trace, 'service.phase', {traceId, phase: 'pull'}, target.key);
     const pr = await api.pull(target, credential.token, traceId);
-    if (!Number.isSafeInteger(pr.id) || !pr.user?.id || typeof pr.head?.sha !== 'string')
+    if (
+      !Number.isSafeInteger(pr.id) ||
+      !Number.isSafeInteger(pr.user?.id) ||
+      typeof pr.head?.sha !== 'string'
+    )
       throw new Error('Invalid PR');
     emitDiagnostic(trace, 'service.phase', {traceId, phase: 'reviews'}, target.key);
-    const reviews = await api.reviews(target, credential.token, traceId);
+    const reviews = await api.reviews(target, credential.token, credential.user.login, traceId);
     const attemptKey = `attempt:${credential.user.id}:${pr.id}`;
     let attempt = await storage.get<Attempt>(attemptKey);
     emitDiagnostic(

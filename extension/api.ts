@@ -1,34 +1,34 @@
 import {timing} from './timing.js';
-import type {GitHubApi, PrTarget, Review} from './model.js';
+import type {GitHubApi, GitHubUser, PrTarget, Review} from './model.js';
 import {diagnosticErrorFields, emitDiagnostic} from './diagnostics.js';
 import type {DiagnosticTrace} from './diagnostics.js';
 
-/** Creates the fixed-destination GitHub REST client. */
+/** Creates a GitHub client that requests only approval metadata. */
 export function createApi(
   fetcher: typeof fetch = (...args) => fetch(...args),
   trace?: DiagnosticTrace,
 ): GitHubApi {
   async function request<T>(
-    path: string,
+    query: string,
+    variables: object,
     token: string,
     endpoint: string,
     traceId?: string,
-    payload?: object,
     page?: number,
   ): Promise<T> {
     const spanId = crypto.randomUUID();
     const start = performance.now();
     emitDiagnostic(trace, 'api.begin', {spanId, traceId, endpoint, page});
     try {
-      const response = await fetcher(`https://api.github.com${path}`, {
-        method: payload ? 'POST' : 'GET',
+      const response = await fetcher('https://api.github.com/graphql', {
+        method: 'POST',
         headers: {
           Accept: 'application/vnd.github+json',
           Authorization: `Bearer ${token}`,
           'X-GitHub-Api-Version': '2022-11-28',
-          ...(payload ? {'Content-Type': 'application/json'} : {}),
+          'Content-Type': 'application/json',
         },
-        ...(payload ? {body: JSON.stringify(payload)} : {}),
+        body: JSON.stringify({query, variables, operationName: operationNames[endpoint]}),
         credentials: 'omit',
         redirect: 'error',
         cache: 'no-store',
@@ -51,16 +51,22 @@ export function createApi(
             response.headers.has('retry-after'),
         );
       }
-      const result = await response.json();
+      const result: GraphResponse<T> = await response.json();
+      // A mutation can succeed partially; its errors cannot establish a definite rejection.
+      if (result.errors?.length) {
+        const types = result.errors.map((error) => error.type);
+        const status = endpoint === 'approve' ? undefined : graphErrorStatus(types);
+        throw new GitHubError(status, types.includes('RATE_LIMITED'));
+      }
+      if (!result.data) throw new Error('Missing GitHub data');
       emitDiagnostic(trace, 'api.end', {
         spanId,
         traceId,
         endpoint,
         outcome: 'ok',
         durationMs: performance.now() - start,
-        count: Array.isArray(result) ? result.length : undefined,
       });
-      return result;
+      return result.data;
     } catch (error) {
       emitDiagnostic(trace, 'api.end', {
         spanId,
@@ -74,30 +80,81 @@ export function createApi(
     }
   }
   return {
-    user: (token, traceId) => request('/user', token, 'user', traceId),
-    pull: (target, token, traceId) => request(pullPath(target), token, 'pull', traceId),
-    reviews: async (target, token, traceId) => {
+    user: async (token, traceId) => {
+      const data = await request<{viewer: GraphUser | null}>(userQuery, {}, token, 'user', traceId);
+      if (!data.viewer?.login) throw new Error('Invalid GitHub identity');
+      return {id: databaseId(data.viewer.databaseId), login: data.viewer.login};
+    },
+    pull: async (target, token, traceId) => {
+      const data = await request<PullData>(
+        pullQuery,
+        targetVariables(target),
+        token,
+        'pull',
+        traceId,
+      );
+      const pr = data.repository?.pullRequest;
+      if (!pr) throw new GitHubError(404, false);
+      if (
+        !pr.id ||
+        !['OPEN', 'CLOSED', 'MERGED'].includes(pr.state) ||
+        typeof pr.merged !== 'boolean' ||
+        !/^[a-f\d]{40,64}$/i.test(pr.headRefOid)
+      )
+        throw new Error('Invalid GitHub pull request');
+      return {
+        id: databaseId(pr.fullDatabaseId),
+        nodeId: pr.id,
+        state: pr.state.toLowerCase(),
+        merged: pr.merged,
+        user: authorIdentity(pr.author),
+        head: {sha: pr.headRefOid},
+      };
+    },
+    reviews: async (target, token, author, traceId) => {
+      if (!author) throw new Error('Missing GitHub review author');
       const reviews: Review[] = [];
+      const cursors = new Set<string>();
+      let cursor: string | null = null;
       for (let page = 1; page <= 1000; page++) {
-        const batch = await request<Review[]>(
-          `${pullPath(target)}/reviews?per_page=100&page=${page}`,
+        const data: ReviewsData = await request<ReviewsData>(
+          reviewsQuery,
+          {...targetVariables(target), author, cursor},
           token,
           'reviews',
           traceId,
-          undefined,
           page,
         );
-        if (!Array.isArray(batch)) throw new Error('Invalid review list');
-        reviews.push(...batch);
-        if (batch.length < 100) return reviews;
+        const connection = data.repository?.pullRequest?.reviews;
+        if (!connection) throw new GitHubError(404, false);
+        if (
+          !Array.isArray(connection.nodes) ||
+          typeof connection.pageInfo?.hasNextPage !== 'boolean'
+        )
+          throw new Error('Invalid GitHub review list');
+        reviews.push(...connection.nodes.map((review) => reviewMetadata(review)));
+        if (!connection.pageInfo.hasNextPage) return reviews;
+        const next = connection.pageInfo.endCursor;
+        if (typeof next !== 'string' || !next || cursors.has(next))
+          throw new Error('Invalid GitHub review cursor');
+        cursors.add(next);
+        cursor = next;
       }
       throw new Error('Review pagination exceeded limit');
     },
-    approve: (target, sha, token, traceId) =>
-      request(`${pullPath(target)}/reviews`, token, 'approve', traceId, {
-        event: 'APPROVE',
-        commit_id: sha,
-      }),
+    approve: async (pullRequestId, commitOid, token, traceId) => {
+      if (!pullRequestId) throw new Error('Missing GitHub pull request ID');
+      const data = await request<ApprovalData>(
+        approveMutation,
+        {pullRequestId, commitOid},
+        token,
+        'approve',
+        traceId,
+      );
+      const review = data.addPullRequestReview?.pullRequestReview;
+      if (!review || typeof review.state !== 'string') throw new Error('Invalid GitHub review');
+      return {id: databaseId(review.fullDatabaseId), state: review.state};
+    },
   };
 }
 
@@ -106,15 +163,132 @@ function numericHeader(response: Response, name: string) {
   return value !== null && /^\d+$/.test(value) ? Number(value) : undefined;
 }
 
-function pullPath(target: PrTarget) {
-  return `/repos/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repo)}/pulls/${target.number}`;
+function graphErrorStatus(types: Array<string | undefined>) {
+  if (types.includes('RATE_LIMITED')) return 429;
+  if (types.includes('FORBIDDEN')) return 403;
+  if (types.includes('NOT_FOUND')) return 404;
+  return undefined;
+}
+
+function databaseId(value: number | string | null | undefined) {
+  const id = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0)
+    throw new Error('Invalid GitHub database ID');
+  return id;
+}
+
+function targetVariables(target: PrTarget) {
+  return {owner: target.owner, name: target.repo, number: target.number};
+}
+
+function authorIdentity(author: {databaseId?: number | null} | null): GitHubUser {
+  // Deleted accounts and non-user actors cannot match the authenticated human viewer.
+  return {id: author?.databaseId == null ? 0 : databaseId(author.databaseId), login: ''};
+}
+
+function reviewMetadata(review: GraphReview | null | undefined): Review {
+  if (!review || typeof review.state !== 'string') throw new Error('Invalid GitHub review');
+  return {
+    id: databaseId(review.fullDatabaseId),
+    state: review.state,
+    user: authorIdentity(review.author),
+    commit_id: review.commit?.oid ?? '',
+  };
 }
 
 class GitHubError extends Error {
   constructor(
-    readonly status: number,
+    readonly status: number | undefined,
     readonly rateLimited: boolean,
   ) {
     super('GitHub request failed');
   }
 }
+
+interface GraphResponse<T> {
+  data?: T | null;
+  errors?: Array<{type?: string}>;
+}
+
+interface GraphUser {
+  databaseId: number | null;
+  login: string;
+}
+
+interface GraphPull {
+  id: string;
+  fullDatabaseId: string | null;
+  state: string;
+  merged: boolean;
+  author: {databaseId?: number | null} | null;
+  headRefOid: string;
+}
+
+interface PullData {
+  repository: {pullRequest: GraphPull | null} | null;
+}
+
+interface GraphReview {
+  commit: {oid: string} | null;
+  fullDatabaseId: string | null;
+  state: string;
+  author: {databaseId?: number | null} | null;
+}
+
+interface ReviewsData {
+  repository: {
+    pullRequest: {
+      reviews: {
+        nodes: Array<GraphReview | null>;
+        pageInfo: {hasNextPage: boolean; endCursor: string | null};
+      };
+    } | null;
+  } | null;
+}
+
+interface ApprovalData {
+  addPullRequestReview: {
+    pullRequestReview: {fullDatabaseId: string | null; state: string} | null;
+  } | null;
+}
+
+const operationNames: Record<string, string> = {
+  user: 'QuickApproveUser',
+  pull: 'QuickApprovePull',
+  reviews: 'QuickApproveReviews',
+  approve: 'QuickApproveApprove',
+};
+
+const userQuery = `query QuickApproveUser {
+  viewer { databaseId login }
+}`;
+
+const pullQuery = `query QuickApprovePull($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id fullDatabaseId state merged headRefOid
+      author { ... on User { databaseId } }
+    }
+  }
+}`;
+
+const reviewsQuery = `query QuickApproveReviews($owner: String!, $name: String!, $number: Int!, $author: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(first: 100, after: $cursor, author: $author) {
+        nodes {
+          fullDatabaseId state
+          author { ... on User { databaseId } }
+          commit { oid }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
+
+const approveMutation = `mutation QuickApproveApprove($pullRequestId: ID!, $commitOid: GitObjectID!) {
+  addPullRequestReview(input: {pullRequestId: $pullRequestId, commitOID: $commitOid, event: APPROVE}) {
+    pullRequestReview { fullDatabaseId state }
+  }
+}`;
