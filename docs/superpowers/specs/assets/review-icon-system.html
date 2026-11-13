@@ -1,0 +1,653 @@
+<style>
+  #review-system {
+    --rs-bg: light-dark(#fff, #0d1117);
+    --rs-surface: light-dark(#f6f8fa, #161b22);
+    --rs-fg: light-dark(#1f2328, #f0f6fc);
+    --rs-muted: light-dark(#59636e, #9198a1);
+    --rs-border: light-dark(#d1d9e0, #3d444d);
+    --rs-amber: light-dark(#9a6700, #d29922);
+    --rs-green: light-dark(#1a7f37, #3fb950);
+    --rs-red: light-dark(#cf222e, #f85149);
+    --rs-blue: light-dark(#0969da, #4493f8);
+  }
+  #review-system .rs-stage {
+    min-height: 1080px;
+    padding: 18px 12px;
+    box-sizing: border-box;
+  }
+  #review-system .rs-product {
+    font:
+      14px/1.5 -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
+    color: var(--rs-fg);
+    max-width: 680px;
+    margin: auto;
+  }
+  #review-system .rs-window {
+    background: var(--rs-bg);
+    border: 1px solid var(--rs-border);
+    border-radius: 9px;
+    padding: 20px;
+  }
+  #review-system .rs-label {
+    font-size: 12px;
+    color: var(--rs-muted);
+    margin: 0 0 12px;
+  }
+  #review-system .rs-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 55px;
+  }
+  #review-system .rs-brand h3 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.4px;
+  }
+  #review-system .rs-brand p {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: var(--rs-muted);
+  }
+  #review-system .rs-old-mark {
+    width: 48px;
+    height: 48px;
+    flex: none;
+    border: 1px solid color-mix(in srgb, var(--rs-green) 40%, transparent);
+    border-radius: 12px;
+    color: var(--rs-green);
+    background: color-mix(in srgb, var(--rs-green) 8%, var(--rs-bg));
+    display: grid;
+    place-items: center;
+    font-size: 32px;
+  }
+  #review-system .rs-brand-new {
+    padding-top: 16px;
+    margin-top: 16px;
+    border-top: 1px solid var(--rs-border);
+  }
+  #review-system .rs-block {
+    margin-top: 24px;
+  }
+  #review-system h4 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  #review-system table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  #review-system th {
+    text-align: left;
+    font-weight: 500;
+    color: var(--rs-muted);
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--rs-border);
+  }
+  #review-system td {
+    padding: 8px 4px;
+    border-bottom: 1px solid var(--rs-border);
+    vertical-align: middle;
+  }
+  #review-system th:nth-child(2),
+  #review-system th:nth-child(3),
+  #review-system td:nth-child(2),
+  #review-system td:nth-child(3) {
+    width: 72px;
+    text-align: center;
+  }
+  #review-system .rs-control {
+    appearance: none;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    min-width: 32px;
+    height: 32px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, currentColor 8%, var(--rs-bg));
+    color: var(--rs-amber);
+    font: inherit;
+    gap: 7px;
+    cursor: var(--cursor-interaction, pointer);
+  }
+  #review-system .rs-diff {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  #review-system .rs-control .rs-diff svg {
+    width: 12px;
+    height: 8px;
+    stroke-width: 2.5;
+  }
+  #review-system .rs-control svg {
+    width: 16px;
+    height: 16px;
+    stroke-width: 1.6;
+  }
+  #review-system .rs-control[data-tone='green'] {
+    color: var(--rs-green);
+  }
+  #review-system .rs-control[data-tone='red'] {
+    color: var(--rs-red);
+  }
+  #review-system .rs-control[data-tone='blue'] {
+    color: var(--rs-blue);
+  }
+  #review-system .rs-control[data-tone='muted'] {
+    color: var(--rs-muted);
+    border-color: var(--rs-border);
+    background: var(--rs-surface);
+  }
+  #review-system .rs-control[data-done='true'] {
+    border-color: transparent;
+    background: transparent;
+    cursor: default;
+  }
+  #review-system .rs-control[aria-disabled='true'] {
+    cursor: default;
+  }
+  #review-system .rs-control:not([aria-disabled='true']):hover {
+    background: color-mix(in srgb, currentColor 14%, var(--rs-bg));
+  }
+  #review-system .rs-solid svg {
+    fill: currentColor;
+    stroke: var(--rs-bg);
+    stroke-width: 2;
+  }
+  #review-system .rs-solid[data-glyph='circle-check'] svg circle,
+  #review-system .rs-solid[data-glyph='circle-minus'] svg circle {
+    stroke: currentColor;
+  }
+  #review-system .rs-control:focus-visible,
+  #review-system select:focus-visible {
+    outline: 2px solid var(--rs-blue);
+    outline-offset: 3px;
+  }
+  #review-system [data-approach='labels'] th:nth-child(3),
+  #review-system [data-approach='labels'] td:nth-child(3) {
+    width: 145px;
+  }
+  #review-system .rs-pill {
+    width: auto;
+    min-width: 32px;
+    padding: 0 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  #review-system .rs-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  #review-system select {
+    font: inherit;
+    font-size: 13px;
+    max-width: 100%;
+    padding: 7px 9px;
+    border: 1px solid var(--rs-border);
+    border-radius: 6px;
+    background: var(--rs-bg);
+    color: var(--rs-fg);
+  }
+  #review-system .rs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid var(--rs-border);
+    border-radius: 6px;
+    background: var(--rs-surface);
+    padding: 12px;
+  }
+  #review-system .rs-native {
+    font-size: 11px;
+    white-space: nowrap;
+    color: var(--rs-muted);
+    margin-left: auto;
+  }
+  #review-system .rs-native b {
+    font-weight: 500;
+  }
+  #review-system .rs-header p {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+  }
+  #review-system .rs-tooltip {
+    font-size: 12px;
+    color: var(--rs-muted);
+    margin: 10px 0 0;
+    min-height: 36px;
+  }
+  #review-system .rs-tooltip strong {
+    font-weight: 400;
+    color: var(--rs-fg);
+  }
+  #review-system .rs-note {
+    font-size: 12px;
+    color: var(--rs-muted);
+    margin: 10px 0 0;
+  }
+  #review-system .rs-status {
+    font-size: 12px;
+    color: var(--rs-muted);
+    margin: 8px 0 0;
+    min-height: 18px;
+  }
+  #review-system .rs-rule {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    margin-top: 12px;
+  }
+  #review-system .rs-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--rs-amber);
+  }
+  #review-system .rs-swatch.green {
+    background: var(--rs-green);
+  }
+  #review-system .rs-compare-caption {
+    font-size: 11px;
+    color: var(--rs-muted);
+    margin-top: 6px;
+  }
+  @media (max-width: 440px) {
+    #review-system .rs-stage {
+      padding: 12px 3px;
+      min-height: 1200px;
+    }
+    #review-system .rs-window {
+      padding: 14px;
+    }
+    #review-system .rs-brand h3 {
+      font-size: 18px;
+    }
+    #review-system .rs-brand p {
+      font-size: 12px;
+    }
+    #review-system th:nth-child(2),
+    #review-system th:nth-child(3),
+    #review-system td:nth-child(2),
+    #review-system td:nth-child(3) {
+      width: 58px;
+    }
+    #review-system .rs-header {
+      flex-wrap: wrap;
+    }
+    #review-system .rs-pill {
+      font-size: 11px;
+    }
+    #review-system [data-approach='labels'] th:nth-child(2),
+    #review-system [data-approach='labels'] td:nth-child(2) {
+      display: none;
+    }
+    #review-system [data-approach='labels'] th:nth-child(3),
+    #review-system [data-approach='labels'] td:nth-child(3) {
+      width: 145px;
+    }
+  }
+  @media (pointer: coarse) {
+    #review-system .rs-header .rs-control {
+      position: relative;
+    }
+    #review-system .rs-header .rs-control:after {
+      content: '';
+      position: absolute;
+      inset: -6px;
+    }
+    #review-system select {
+      font-size: 16px;
+    }
+  }
+</style>
+<div id="review-system">
+  <div class="viz-carousel viz-dotted-background" aria-label="Review action and status approaches">
+    <section
+      class="rs-stage"
+      data-variant="Compact icon system"
+      aria-label="Compact icon system recommendation"
+    >
+      <div class="rs-product" data-approach="icons">
+        <div class="rs-window">
+          <p class="rs-label">Settings header</p>
+          <div class="rs-brand">
+            <div class="rs-old-mark" aria-hidden="true">✓</div>
+            <div>
+              <h3>GitHub Quick Approve</h3>
+              <p>One click. Review approved.</p>
+            </div>
+          </div>
+          <div class="rs-brand rs-brand-new">
+            <div>
+              <h3>GitHub Quick Approve</h3>
+              <p>Review shortcuts for GitHub pull requests.</p>
+            </div>
+          </div>
+        </div>
+        <div class="rs-window rs-block">
+          <h4>Header controls · actual 32 px size</h4>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Review state</th>
+                <th scope="col">Before</th>
+                <th scope="col">After</th>
+              </tr>
+            </thead>
+            <tbody class="rs-comparison"></tbody>
+          </table>
+          <p class="rs-compare-caption">
+            Glyph families previewed with Lucide; final geometry follows the same 16 px stroke grid.
+          </p>
+          <div class="rs-rule">
+            <span class="rs-swatch"></span>Amber check: approval is available
+          </div>
+          <div class="rs-rule">
+            <span class="rs-swatch green"></span>Solid green circle: approval is complete
+          </div>
+        </div>
+        <div class="rs-window rs-block">
+          <h4>Try the action → result</h4>
+          <div class="rs-controls">
+            <label for="rs-state-icons">Review state</label
+            ><select id="rs-state-icons" class="rs-state">
+              <option value="quick">No pending review</option>
+              <option value="approve" selected>Pending: approve</option>
+              <option value="changes">Pending: request changes</option>
+              <option value="comment">Pending: comment</option>
+              <option value="locked">Pending: locked (default)</option>
+              <option value="approved">Already approved</option>
+              <option value="changes-requested">Changes already requested</option>
+              <option value="commented">Comment review already submitted</option>
+            </select>
+          </div>
+          <div class="rs-header">
+            <p>#284 · Handle expired sessions</p>
+            <span class="rs-native">Submit review <b>2</b> ▾</span><span class="rs-demo"></span>
+          </div>
+          <p class="rs-tooltip">Tooltip: <strong></strong></p>
+          <p class="rs-status" aria-live="polite"></p>
+          <p class="rs-note">
+            Tab to inspect. Enter or Space submits an available action. Completed and locked states
+            stay focusable for their explanation; they do not submit.
+          </p>
+        </div>
+      </div>
+    </section>
+    <section
+      class="rs-stage"
+      data-variant="Labeled controls"
+      aria-label="Labeled controls alternative"
+      hidden
+    >
+      <div class="rs-product" data-approach="labels">
+        <div class="rs-window">
+          <p class="rs-label">Settings header</p>
+          <div class="rs-brand">
+            <div class="rs-old-mark" aria-hidden="true">✓</div>
+            <div>
+              <h3>GitHub Quick Approve</h3>
+              <p>One click. Review approved.</p>
+            </div>
+          </div>
+          <div class="rs-brand rs-brand-new">
+            <div>
+              <h3>GitHub Quick Approve</h3>
+              <p>Review shortcuts for GitHub pull requests.</p>
+            </div>
+          </div>
+        </div>
+        <div class="rs-window rs-block">
+          <h4>Header controls · explicit labels</h4>
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Review state</th>
+                <th scope="col">Before</th>
+                <th scope="col">After</th>
+              </tr>
+            </thead>
+            <tbody class="rs-comparison"></tbody>
+          </table>
+          <p class="rs-note">
+            Verbs identify actions. Past tense identifies completed reviews. The header uses more
+            horizontal space.
+          </p>
+        </div>
+        <div class="rs-window rs-block">
+          <h4>Try the action → result</h4>
+          <div class="rs-controls">
+            <label for="rs-state-labels">Review state</label
+            ><select id="rs-state-labels" class="rs-state">
+              <option value="quick">No pending review</option>
+              <option value="approve" selected>Pending: approve</option>
+              <option value="changes">Pending: request changes</option>
+              <option value="comment">Pending: comment</option>
+              <option value="locked">Pending: locked (default)</option>
+              <option value="approved">Already approved</option>
+              <option value="changes-requested">Changes already requested</option>
+              <option value="commented">Comment review already submitted</option>
+            </select>
+          </div>
+          <div class="rs-header">
+            <p>#284 · Handle expired sessions</p>
+            <span class="rs-native">Submit review <b>2</b> ▾</span><span class="rs-demo"></span>
+          </div>
+          <p class="rs-tooltip">Tooltip: <strong></strong></p>
+          <p class="rs-status" aria-live="polite"></p>
+          <p class="rs-note">
+            Tab to inspect. Enter or Space submits an available action. Completed and locked states
+            stay focusable for their explanation; they do not submit.
+          </p>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+  (() => {
+    const root = document.getElementById('review-system');
+    const definitions = {
+      quick: {
+        name: 'Quick approve',
+        glyph: 'check',
+        tone: 'amber',
+        label: 'Approve this pull request',
+        text: 'Approve',
+        next: 'approved',
+        old: 'message-square-code',
+      },
+      approve: {
+        name: 'Pending: approve',
+        glyph: 'check',
+        tone: 'amber',
+        label: 'Approve and submit pending comments',
+        text: 'Approve',
+        next: 'approved',
+        old: 'check',
+        oldTone: 'green',
+      },
+      changes: {
+        name: 'Pending: request changes',
+        glyph: 'diff',
+        tone: 'red',
+        label: 'Request changes and submit pending comments',
+        text: 'Request changes',
+        next: 'changes-requested',
+      },
+      comment: {
+        name: 'Pending: comment',
+        glyph: 'message-square',
+        tone: 'blue',
+        label: 'Submit pending comments as a review',
+        text: 'Comment',
+        next: 'commented',
+      },
+      approved: {
+        name: 'Approved',
+        glyph: 'circle-check',
+        tone: 'green',
+        label: 'You approved this PR',
+        text: 'Approved',
+        done: true,
+        solid: true,
+        oldChrome: true,
+      },
+      'changes-requested': {
+        name: 'Changes requested (brief feedback)',
+        glyph: 'circle-minus',
+        tone: 'red',
+        label: 'You requested changes on this PR',
+        text: 'Changes requested',
+        done: true,
+        solid: true,
+        old: 'diff',
+        oldChrome: true,
+      },
+      commented: {
+        name: 'Comment submitted (brief feedback)',
+        glyph: 'message-square',
+        tone: 'blue',
+        label: 'You submitted a comment review',
+        text: 'Commented',
+        done: true,
+        solid: true,
+        oldChrome: true,
+      },
+      locked: {
+        name: 'Pending: locked (default)',
+        glyph: 'lock-keyhole',
+        tone: 'muted',
+        label: 'Finish your pending review in GitHub',
+        text: 'Review locked',
+        done: true,
+      },
+    };
+    function control(key, {old = false, labels = false, interactive = false} = {}) {
+      const d = definitions[key],
+        glyph = old ? d.old || d.glyph : d.glyph,
+        tone = old ? d.oldTone || d.tone : d.tone,
+        done = d.done && key !== 'locked' && (!old || !d.oldChrome);
+      const el = document.createElement(interactive ? 'button' : 'span');
+      el.className =
+        'rs-control' +
+        ((!old && d.solid) || (old && key === 'approved') ? ' rs-solid' : '') +
+        (labels ? ' rs-pill' : '');
+      el.dataset.glyph = glyph;
+      el.dataset.tone = tone;
+      el.dataset.done = String(done);
+      if (interactive) {
+        el.type = 'button';
+        el.setAttribute('aria-label', d.label);
+        el.setAttribute('aria-disabled', String(!!d.done));
+        el.dataset.tooltip = d.label;
+        el.classList.add('cursor-interaction');
+      } else {
+        el.setAttribute('role', 'img');
+        el.setAttribute('aria-label', d.label);
+      }
+      el.innerHTML =
+        (glyph === 'diff'
+          ? '<span class="rs-diff" aria-hidden="true"><i data-lucide="plus"></i><i data-lucide="minus"></i></span>'
+          : '<i data-lucide="' + glyph + '" aria-hidden="true"></i>') +
+        (labels ? '<span>' + d.text + '</span>' : '');
+      return el;
+    }
+    const renders = [];
+    root.querySelectorAll('[data-approach]').forEach((product) => {
+      const labels = product.dataset.approach === 'labels',
+        key = product.dataset.approach;
+      Object.keys(definitions).forEach((id) => {
+        const row = document.createElement('tr');
+        const name = document.createElement('td');
+        name.textContent = definitions[id].name;
+        const before = document.createElement('td'),
+          after = document.createElement('td');
+        before.append(control(id, {old: true}));
+        after.append(control(id, {labels}));
+        row.append(name, before, after);
+        product.querySelector('tbody').append(row);
+      });
+      const saved = window.openai?.widgetState?.modelContent?.[key];
+      const state = {review: definitions[saved] ? saved : 'approve'};
+      function render() {
+        const d = definitions[state.review];
+        product.querySelector('.rs-state').value = state.review;
+        const demo = product.querySelector('.rs-demo');
+        const button = control(state.review, {labels, interactive: true});
+        demo.replaceChildren(button);
+        product.querySelector('.rs-tooltip strong').textContent = d.label;
+        product.querySelector('.rs-native').innerHTML =
+          (d.done && state.review !== 'locked') || state.review === 'quick'
+            ? 'Submit review ▾'
+            : 'Submit review <b>2</b> ▾';
+        product.querySelector('.rs-status').textContent =
+          state.review === 'changes-requested' || state.review === 'commented'
+            ? 'Confirmed result shown briefly. After GitHub refresh: Quick approve is available.'
+            : d.done
+              ? 'No submission available.'
+              : 'Available action. One click submits the review.';
+        button.addEventListener('click', () => {
+          if (d.done) return;
+          state.review = d.next;
+          render();
+          save();
+        });
+        globalThis.lucide?.createIcons({attrs: {width: 16, height: 16}});
+      }
+      function save() {
+        const modelContent = {};
+        root
+          .querySelectorAll('[data-approach]')
+          .forEach((p) => (modelContent[p.dataset.approach] = p.querySelector('.rs-state').value));
+        window.openai?.setWidgetState({modelContent}).catch(() => {});
+      }
+      product.querySelector('select').addEventListener('change', (event) => {
+        state.review = event.target.value;
+        render();
+        save();
+      });
+      render();
+      renders.push((data) => {
+        if (definitions[data?.[key]]) {
+          state.review = data[key];
+          render();
+        }
+      });
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({container: product, onChange: render});
+        tweak.addSelect(state, 'review', {
+          label: 'Review state',
+          options: Object.keys(definitions).map((value) => ({
+            label: definitions[value].name,
+            value,
+          })),
+        });
+      }
+    });
+    window.addEventListener('openai:set_globals', (event) =>
+      renders.forEach((render) => render(event.detail?.globals?.widgetState?.modelContent)),
+    );
+  })();
+</script>

@@ -465,8 +465,10 @@ const CHOICE_FIELDS: Record<string, string[]> = {
     'status',
     'setToken',
     'removeToken',
+    'getPreferences',
+    'setPreferences',
   ],
-  endpoint: ['user', 'pull', 'reviews', 'approve'],
+  endpoint: ['user', 'pull', 'reviews', 'approve', 'submitReview'],
   state: [
     'loading',
     'busy',
@@ -485,6 +487,9 @@ const CHOICE_FIELDS: Record<string, string[]> = {
     'own',
     'pending',
     'connected',
+    'preferences',
+    'changes-requested',
+    'commented',
   ],
   pageState: ['open', 'draft', 'closed', 'merged', 'unknown'],
   phase: [
@@ -498,7 +503,7 @@ const CHOICE_FIELDS: Record<string, string[]> = {
     'notify',
     'parse',
   ],
-  area: ['credential', 'attempt', 'access'],
+  area: ['credential', 'attempt', 'access', 'preferences'],
   operation: ['get', 'set', 'remove'],
   outcome: ['ok', 'error', 'timeout', 'superseded', 'rejected', 'unavailable', 'interrupted'],
   reason: [

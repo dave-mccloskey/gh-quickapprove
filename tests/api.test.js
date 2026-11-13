@@ -235,3 +235,41 @@ test('PR-only tokens can read existing approvals without Contents permission', a
     {id: 11, state: 'APPROVED', user: {id: 7, login: ''}},
   ]);
 });
+
+// Catches creating a second review, replacing its body, or submitting the wrong event.
+test('pending review submission targets its node ID and leaves body unchanged', async () => {
+  for (const [action, event, state] of [
+    ['changes', 'REQUEST_CHANGES', 'CHANGES_REQUESTED'],
+    ['comment', 'COMMENT', 'COMMENTED'],
+    ['approve', 'APPROVE', 'APPROVED'],
+  ]) {
+    let payload;
+    const api = createApi(async (url, options) => {
+      assert.equal(url, 'https://api.github.com/graphql');
+      payload = JSON.parse(options.body);
+      return response({
+        submitPullRequestReview: {pullRequestReview: {fullDatabaseId: '11', state}},
+      });
+    });
+    assert.deepEqual(await api.submitReview('PRR_pending', action, 'fake-token'), {id: 11, state});
+    assert.equal(payload.operationName, 'QuickApproveSubmitReview');
+    assert.deepEqual(payload.variables, {reviewId: 'PRR_pending', event});
+    assert.match(payload.query, /submitPullRequestReview/);
+    assert.doesNotMatch(payload.query, /\bbody\b/);
+  }
+});
+
+test('partial pending review submission errors retain an uncertain outcome', async () => {
+  const api = createApi(async () =>
+    Response.json({
+      data: {
+        submitPullRequestReview: {pullRequestReview: {fullDatabaseId: '11', state: 'APPROVED'}},
+      },
+      errors: [{type: 'FORBIDDEN'}],
+    }),
+  );
+  await assert.rejects(
+    api.submitReview('PRR_pending', 'approve', 'fake-token'),
+    (error) => error.status === undefined,
+  );
+});

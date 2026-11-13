@@ -23,15 +23,22 @@ export interface PullRequest {
 
 export interface Review {
   id: number;
+  nodeId?: string;
   state: string;
   user: GitHubUser;
 }
 
+export type PendingReviewAction = 'lock' | 'changes' | 'comment' | 'approve';
+export type ReviewAction = Exclude<PendingReviewAction, 'lock'>;
+
 export interface ViewState {
+  shortcutEnabled?: boolean;
   kind: string;
   label: string;
   sha?: string;
   login?: string;
+  action?: PendingReviewAction;
+  reviewId?: string;
 }
 
 export interface Credential {
@@ -48,15 +55,20 @@ export interface Attempt {
   target: PrTarget;
   sha: string;
   reviewIds: number[];
+  action?: ReviewAction;
+  reviewId?: string;
 }
 
 export interface ExtensionMessage {
+  shortcutEnabled?: boolean;
   op: string;
   pageUser?: string;
   generation?: number;
   sha?: string;
   token?: string;
   traceId?: string;
+  action?: PendingReviewAction;
+  reviewId?: string;
 }
 
 export interface MessageSender {
@@ -68,6 +80,12 @@ export interface MessageSender {
 }
 
 export interface GitHubApi {
+  submitReview(
+    reviewId: string,
+    action: ReviewAction,
+    token: string,
+    traceId?: string,
+  ): Promise<Pick<Review, 'id' | 'state'>>;
   user(token: string, traceId?: string): Promise<GitHubUser>;
   pull(target: PrTarget, token: string, traceId?: string): Promise<PullRequest>;
   reviews(target: PrTarget, token: string, author: string, traceId?: string): Promise<Review[]>;

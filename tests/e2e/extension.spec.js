@@ -65,9 +65,22 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
   const fixture = await readFile('tests/fixtures/pr.html', 'utf8');
-  await context.route('https://github.com/**', (route) =>
-    route.fulfill({contentType: 'text/html', body: fixture}),
-  );
+  await context.route('https://github.com/**', (route) => {
+    let body = fixture;
+    if (server.showNativeReviewState) {
+      const pending = server.reviews.some(
+        (review) =>
+          review.author?.databaseId === server.user.databaseId && review.state === 'PENDING',
+      );
+      body = body.replace('Submit review ▾', pending ? 'Submit review 1 ▾' : 'Submit review ▾');
+      const state = pending ? '1 pending comment' : 'Review submitted';
+      body = body.replace(
+        '<main>',
+        '<main style="min-height:2000px"><p data-testid="native-review-state">' + state + '</p>',
+      );
+    }
+    return route.fulfill({contentType: 'text/html', body});
+  });
   await context.route('https://api.github.com/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -80,6 +93,19 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
       return route.fulfill({status: 401, json: {message: 'Bad credentials'}});
     if (operation === 'QuickApproveUser')
       return route.fulfill({json: {data: {viewer: server.user}}});
+    if (operation === 'QuickApproveSubmitReview') {
+      const review = server.reviews.find((item) => item.id === payload.variables.reviewId);
+      expect(review?.state).toBe('PENDING');
+      server.posts.push(payload.variables);
+      review.state = {
+        REQUEST_CHANGES: 'CHANGES_REQUESTED',
+        COMMENT: 'COMMENTED',
+        APPROVE: 'APPROVED',
+      }[payload.variables.event];
+      if (server.losePostResponse) return route.abort('failed');
+      if (server.postGate) await server.postGate;
+      return route.fulfill({json: {data: {submitPullRequestReview: {pullRequestReview: review}}}});
+    }
     if (operation === 'QuickApproveApprove') {
       server.posts.push(payload.variables);
       const review = {
@@ -995,6 +1021,33 @@ test('Back returns from a label page to a usable PR control', async () => {
   expect(server.posts).toHaveLength(0);
 });
 
+test('diff hash updates preserve an in-flight approval check', async () => {
+  await connect();
+  let release;
+  server.readGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const page = await context.newPage();
+  await page.goto('https://github.com/example/widget/pull/23/changes');
+  const control = page.locator('[data-quickapprove-root] button');
+  await expect(control).toHaveAttribute('data-state', 'loading');
+  await expect.poll(() => server.readRequests ?? 0).toBe(1);
+  for (let index = 0; index < 8; index++) {
+    await page.evaluate((index) => {
+      history.replaceState({}, '', `#diff-${index}`);
+    }, index);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+  }
+  release();
+  await expect(control).toHaveAttribute('data-state', 'available');
+  expect(server.readRequests).toBe(2);
+  // Replacing history state at the same URL must preserve the accepted view too.
+  await page.evaluate(() => history.replaceState({scroll: 100}, '', location.href));
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  await expect(control).toHaveAttribute('data-state', 'available');
+  expect(server.readRequests).toBe(2);
+});
+
 test('restoring a cached PR replaces a state request whose reply was lost', async () => {
   await connect();
   const page = await context.newPage();
@@ -1308,3 +1361,454 @@ for (const op of ['state', 'approve']) {
     expect(server.posts).toHaveLength(op === 'approve' ? 1 : 0);
   });
 }
+
+for (const [choice, action, event, label, icon] of [
+  [
+    'Request changes',
+    'changes',
+    'REQUEST_CHANGES',
+    'Request changes and submit pending comments',
+    'changes',
+  ],
+  ['Comment', 'comment', 'COMMENT', 'Submit pending comments as a review', 'comment'],
+  ['Approve', 'approve', 'APPROVE', 'Approve and submit pending comments', 'approve-review'],
+]) {
+  test(`pending review setting ${action} persists and submits saved comments with one keyboard activation`, async () => {
+    const settings = await connect();
+    server.reviews = [
+      {
+        id: 'PRR_pending',
+        fullDatabaseId: '51',
+        author: server.user,
+        state: 'PENDING',
+        body: 'Saved summary',
+        comments: ['Please handle expiration', 'Add coverage'],
+      },
+    ];
+    const page = await prPage();
+    await expect(
+      page.getByRole('button', {name: 'Finish your pending review in GitHub', exact: true}),
+    ).toHaveAttribute('aria-disabled', 'true');
+    await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeChecked();
+    await settings.getByRole('radio', {name: new RegExp('^' + choice)}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const control = page.getByRole('button', {name: label, exact: true});
+    await expect(control).toHaveAttribute('data-icon', icon);
+    await expect(control).toHaveAttribute('aria-disabled', 'false');
+    await settings.reload();
+    await expect(settings.getByRole('radio', {name: new RegExp('^' + choice)})).toBeChecked();
+    await control.focus();
+    // Submission refreshes GitHub's native review state. Wait for that navigation
+    // before issuing the explicit reload below so the two reloads cannot race.
+    await Promise.all([page.waitForEvent('domcontentloaded'), page.keyboard.press('Enter')]);
+    await expect.poll(() => server.posts.length).toBe(1);
+    expect(server.posts[0]).toEqual({reviewId: 'PRR_pending', event});
+    expect(server.reviews[0].body).toBe('Saved summary');
+    expect(server.reviews[0].comments).toEqual(['Please handle expiration', 'Add coverage']);
+    await page.reload();
+    const nextLabel = action === 'approve' ? 'You approved this PR' : 'Quick approve';
+    await expect(page.getByRole('button', {name: nextLabel, exact: true})).toBeVisible();
+    expect(server.posts).toHaveLength(1);
+  });
+}
+
+test('returning the pending action to lock updates open tabs without a submission', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Request changes/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  await expect(
+    page.getByRole('button', {name: 'Request changes and submit pending comments', exact: true}),
+  ).toBeVisible();
+  await settings.getByRole('radio', {name: /Keep locked/}).check();
+  const lock = page.getByRole('button', {
+    name: 'Finish your pending review in GitHub',
+    exact: true,
+  });
+  await expect(lock).toHaveAttribute('aria-disabled', 'true');
+  await lock.click({force: true});
+  expect(server.posts).toHaveLength(0);
+});
+
+test('a lost pending review reply recovers its submitted review without another write', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  server.losePostResponse = true;
+  await page.evaluate(() => {
+    window.pendingReloadMarker = true;
+  });
+  await page
+    .getByRole('button', {name: 'Submit pending comments as a review', exact: true})
+    .click();
+  await expect.poll(() => server.posts.length).toBe(1);
+  await expect(page.locator('.qa-button')).toHaveAttribute('data-state', 'uncertain');
+  expect(await page.evaluate(() => window.pendingReloadMarker)).toBe(true);
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(1);
+});
+
+test('a lost preference-save reply restores controls and reload confirms the saved choice', async () => {
+  const settings = await options();
+  await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeEnabled();
+  await settings.evaluate(async () => {
+    const {timing} = await import(chrome.runtime.getURL('timing.js'));
+    timing.optionsRequestMs = 100;
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+    chrome.runtime.sendMessage = (...args) => {
+      const response = send(...args);
+      return args[0]?.op === 'setPreferences' ? new Promise(() => {}) : response;
+    };
+  });
+  await settings.getByRole('radio', {name: /^Request changes/}).check();
+  await expect(settings.locator('#review-preference-status')).toContainText('Could not confirm');
+  await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeEnabled();
+  await settings.reload();
+  await expect(settings.getByRole('radio', {name: /^Request changes/})).toBeChecked();
+  expect(server.posts).toHaveLength(0);
+});
+
+test('pending review settings and colored header actions fit dark desktop and light mobile', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.emulateMedia({colorScheme: 'dark'});
+  const page = await prPage();
+  for (const [action, name, label] of [
+    ['changes', /^Request changes/, 'Request changes and submit pending comments'],
+    ['comment', /^Comment/, 'Submit pending comments as a review'],
+    ['approve', /^Approve/, 'Approve and submit pending comments'],
+  ]) {
+    await settings.getByRole('radio', {name}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const control = page.getByRole('button', {name: label, exact: true});
+    await control.hover();
+    await expect(page.getByText(label, {exact: true})).toBeVisible();
+    await page.screenshot({path: `test-results/pending-${action}-header.png`});
+  }
+  await settings
+    .locator('.review-preferences')
+    .screenshot({path: 'test-results/pending-settings-dark.png'});
+  await settings.emulateMedia({colorScheme: 'light'});
+  await settings.setViewportSize({width: 390, height: 844});
+  await settings.locator('.review-preferences').scrollIntoViewIfNeeded();
+  await expect(settings.getByRole('radio', {name: /^Approve/})).toBeInViewport();
+  expect(await settings.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+  await settings
+    .locator('.review-preferences')
+    .screenshot({path: 'test-results/pending-settings-mobile-light.png'});
+  expect(server.posts).toHaveLength(0);
+});
+
+test('settings radio choices retain focus between keyboard changes', async () => {
+  const settings = await options();
+  const locked = settings.getByRole('radio', {name: /Keep locked/});
+  await expect(locked).toBeEnabled();
+  await locked.focus();
+  await settings.keyboard.press('ArrowDown');
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  await expect(settings.getByRole('radio', {name: /^Request changes/})).toBeFocused();
+  await settings.keyboard.press('ArrowDown');
+  await expect(settings.getByRole('radio', {name: /^Comment/})).toBeChecked();
+});
+
+test('navigation while a pending preference read yields cancels the old review submission', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  server.prByNumber = {24: {...server.pr, id: 'PR_100', fullDatabaseId: '100'}};
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  const control = page.getByRole('button', {
+    name: 'Submit pending comments as a review',
+    exact: true,
+  });
+  await expect(control).toBeVisible();
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    const get = chrome.storage.local.get.bind(chrome.storage.local);
+    let preferenceReads = 0;
+    chrome.storage.local.get = async (...args) => {
+      const value = await get(...args);
+      if (args[0] === 'pendingReviewAction' && ++preferenceReads === 3) {
+        self.pendingPreferenceBlocked = true;
+        await new Promise((resolve) => {
+          self.releasePendingPreference = resolve;
+        });
+      }
+      return value;
+    };
+  });
+  await control.click();
+  await expect.poll(() => worker.evaluate(() => self.pendingPreferenceBlocked)).toBe(true);
+  await page.goto('https://github.com/example/widget/pull/24');
+  await expect(
+    page.getByRole('button', {name: 'Submit pending comments as a review', exact: true}),
+  ).toBeVisible();
+  await worker.evaluate(() => self.releasePendingPreference());
+  await expect
+    .poll(() =>
+      settings.evaluate(
+        async () => (await chrome.storage.local.get('attempt:7:99'))['attempt:7:99'],
+      ),
+    )
+    .toBeUndefined();
+  expect(server.posts).toHaveLength(0);
+});
+
+for (const [choice, label] of [
+  [/^Request changes/, 'Request changes and submit pending comments'],
+  [/^Comment/, 'Submit pending comments as a review'],
+  [/^Approve/, 'Approve and submit pending comments'],
+]) {
+  test(`confirmed ${label} refreshes GitHub's native pending review controls`, async () => {
+    const settings = await connect();
+    server.showNativeReviewState = true;
+    server.reviews = [
+      {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+    ];
+    await settings.getByRole('radio', {name: choice}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const page = await prPage();
+    await expect(page.getByTestId('review-button')).toHaveText('Submit review 1 ▾');
+    await expect(page.getByTestId('native-review-state')).toHaveText('1 pending comment');
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await page.getByRole('button', {name: label, exact: true}).click();
+    await expect.poll(() => server.posts.length).toBe(1);
+    await expect(page.getByTestId('review-button')).toHaveText('Submit review ▾');
+    await expect(page.getByTestId('native-review-state')).toHaveText('Review submitted');
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(500);
+    expect(server.posts).toHaveLength(1);
+  });
+}
+
+test('approval actions share amber styling and completed approval is a distinct inert status', async () => {
+  const settings = await connect();
+  await expect(settings.locator('header .mark')).toHaveCount(0);
+  await expect(settings.locator('header')).toContainText(
+    'Review shortcuts for GitHub pull requests.',
+  );
+  const page = await prPage();
+  const ordinary = page.getByRole('button', {name: 'Quick approve', exact: true});
+  await expect(ordinary).toBeVisible();
+  const ordinaryColor = await ordinary.evaluate((button) => getComputedStyle(button).color);
+  const ordinaryPath = await ordinary.locator('path').getAttribute('d');
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Approve/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const pending = page.getByRole('button', {
+    name: 'Approve and submit pending comments',
+    exact: true,
+  });
+  await expect(pending).toBeVisible();
+  expect(await pending.evaluate((button) => getComputedStyle(button).color)).toBe(ordinaryColor);
+  const actionPath = await pending.locator('path').getAttribute('d');
+  expect(ordinaryPath).toBe(actionPath);
+  await pending.click();
+  const completed = page.getByRole('button', {name: 'You approved this PR', exact: true});
+  await expect(completed).toHaveAttribute('aria-disabled', 'true');
+  await expect(completed).toBeVisible();
+  expect(await completed.locator('path').getAttribute('d')).not.toBe(actionPath);
+  const statusStyle = await completed.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      color: style.color,
+      cursor: style.cursor,
+    };
+  });
+  expect(statusStyle.background).toBe('rgba(0, 0, 0, 0)');
+  expect(statusStyle.border).toBe('rgba(0, 0, 0, 0)');
+  expect(statusStyle.color).not.toBe(ordinaryColor);
+  expect(statusStyle.cursor).toBe('default');
+  await completed.hover();
+  expect(await completed.evaluate((button) => getComputedStyle(button).backgroundColor)).toBe(
+    'rgba(0, 0, 0, 0)',
+  );
+  await completed.click({force: true});
+  expect(server.posts).toHaveLength(1);
+});
+
+test('a confirmed pending submission from the previous PR cannot reload the current PR', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  let release;
+  server.postGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page
+    .getByRole('button', {name: 'Submit pending comments as a review', exact: true})
+    .click();
+  await expect.poll(() => server.posts.length).toBe(1);
+  await page.evaluate(() => {
+    window.pendingReloadMarker = true;
+    history.pushState({}, '', '/example/widget/pull/24');
+    document.dispatchEvent(new Event('turbo:load'));
+  });
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  release();
+  await expect
+    .poll(() =>
+      settings.evaluate(async () => {
+        const tabs = await chrome.tabs.query({url: 'https://github.com/*'});
+        const snapshot = await chrome.tabs.sendMessage(
+          tabs[0].id,
+          {op: 'diagnosticsSnapshot'},
+          {frameId: 0},
+        );
+        return snapshot.discarded;
+      }),
+    )
+    .toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.pendingReloadMarker)).toBe(true);
+  await expect(page).toHaveURL('https://github.com/example/widget/pull/24');
+  expect(server.posts).toHaveLength(1);
+});
+
+test('Shift+L is disabled by default and the opt-in persists across settings reloads', async () => {
+  const settings = await connect();
+  const toggle = settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'});
+  await expect(toggle).not.toBeChecked();
+  const page = await prPage();
+  const button = page.getByRole('button', {name: 'Quick approve', exact: true});
+  await expect(button).toBeVisible();
+  await page.keyboard.press('Shift+L');
+  await expect(button).toHaveAttribute('data-state', 'available');
+  expect(server.posts).toHaveLength(0);
+  await toggle.check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  await expect(button).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await settings.reload();
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut disabled.');
+  await expect(button).not.toHaveAttribute('aria-keyshortcuts');
+  await page.keyboard.press('Shift+L');
+  await expect(button).toHaveAttribute('data-state', 'available');
+  expect(server.posts).toHaveLength(0);
+});
+
+for (const [choice, event] of [
+  [null, 'APPROVE'],
+  ['Request changes', 'REQUEST_CHANGES'],
+  ['Comment', 'COMMENT'],
+  ['Approve', 'APPROVE'],
+]) {
+  test(`Shift+L activates the ${choice ?? 'ordinary approval'} button action once`, async () => {
+    const settings = await connect();
+    if (choice) {
+      server.reviews = [
+        {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+      ];
+      await settings.getByRole('radio', {name: new RegExp('^' + choice)}).check();
+      await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    }
+    await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+    await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+    const page = await prPage();
+    await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+    await page.keyboard.press('Shift+L');
+    await expect.poll(() => server.posts.length).toBe(1);
+    if (choice) expect(server.posts[0]).toEqual({reviewId: 'PRR_pending', event});
+    else expect(server.posts[0]).toEqual({pullRequestId: 'PR_99', commitOid: sha});
+  });
+}
+
+test('Shift+L ignores editors, synthetic events, extra modifiers, and a locked review', async () => {
+  const settings = await connect();
+  await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  const page = await prPage();
+  await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await page.evaluate(() => {
+    const editors = document.createElement('div');
+    editors.innerHTML =
+      '<input id="shortcut-input"><textarea id="shortcut-comment"></textarea><select id="shortcut-select"><option>Value</option></select><div id="shortcut-editable" contenteditable="true">Review draft</div><div id="shortcut-textbox" role="textbox" tabindex="0">Custom editor</div>';
+    document.querySelector('main').append(editors);
+  });
+  for (const id of [
+    'shortcut-input',
+    'shortcut-comment',
+    'shortcut-select',
+    'shortcut-editable',
+    'shortcut-textbox',
+  ]) {
+    await page.locator('#' + id).focus();
+    await page.keyboard.press('Shift+L');
+  }
+  await page.getByRole('heading', {name: 'Improve search results', exact: true}).click();
+  await page.keyboard.press('Control+Shift+L');
+  await page.keyboard.press('Alt+Shift+L');
+  await page.evaluate(() =>
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'L', shiftKey: true, bubbles: true})),
+  );
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toHaveAttribute(
+    'data-state',
+    'available',
+  );
+  expect(server.posts).toHaveLength(0);
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await page.reload();
+  await expect(
+    page.getByRole('button', {name: 'Finish your pending review in GitHub', exact: true}),
+  ).toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Shift+L');
+  expect(server.posts).toHaveLength(0);
+});
+
+test('holding Shift+L cannot submit again after the pending review refreshes', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  const page = await prPage();
+  await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await page.keyboard.down('Shift');
+  try {
+    await page.keyboard.down('l');
+    await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+    await page.evaluate(() => {
+      window.addEventListener(
+        'keydown',
+        (event) => {
+          window.shortcutRepeatObserved = event.repeat;
+        },
+        {once: true},
+      );
+    });
+    await page.keyboard.down('l');
+    expect(await page.evaluate(() => window.shortcutRepeatObserved)).toBe(true);
+    await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+    expect(server.posts).toHaveLength(1);
+  } finally {
+    await page.keyboard.up('l');
+    await page.keyboard.up('Shift');
+  }
+});

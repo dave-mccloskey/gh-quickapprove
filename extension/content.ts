@@ -83,6 +83,44 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') hideTooltip();
     });
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (
+          !event.isTrusted ||
+          event.defaultPrevented ||
+          event.isComposing ||
+          event.repeat ||
+          !event.shiftKey ||
+          event.ctrlKey ||
+          event.altKey ||
+          event.metaKey ||
+          event.key.toLowerCase() !== 'l' ||
+          controller.view.shortcutEnabled !== true ||
+          !root.isConnected ||
+          !button.getClientRects().length ||
+          button.getAttribute('aria-disabled') === 'true'
+        )
+          return;
+        if (
+          event
+            .composedPath()
+            .some(
+              (target) =>
+                target instanceof HTMLElement &&
+                (target.isContentEditable ||
+                  target.matches(
+                    'input, textarea, select, [role="textbox"], [role="searchbox"], [role="combobox"]',
+                  )),
+            )
+        )
+          return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void activate();
+      },
+      true,
+    );
     window.addEventListener('focus', () => {
       recordDiagnostic('ui.visibility', {visible: !document.hidden});
       if (controller.phase !== 'approving') void refresh('state', false, 'focus');
@@ -92,7 +130,17 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       if (!document.hidden && controller.phase !== 'approving')
         void refresh('state', false, 'visibility');
     });
-    window.navigation?.addEventListener('navigate', () => {
+    window.navigation?.addEventListener('navigate', (event) => {
+      const destination = new URL(event.destination.url);
+      // GitHub updates diff anchors and scroll history without changing the PR context.
+      // Keep the current request and accepted view across those same-page updates.
+      if (
+        event.destination.sameDocument &&
+        destination.origin === location.origin &&
+        destination.pathname === location.pathname &&
+        destination.search === location.search
+      )
+        return;
       recordDiagnostic('ui.route', {reason: 'navigation', generation: controller.epoch});
       void dispatch({type: 'reset', now: performance.now()});
       schedule();
@@ -240,7 +288,13 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
           op,
           generation: token.epoch,
           pageUser: operation.context.pageUser,
-          ...(approval ? {sha: operation.sha} : {}),
+          ...(approval
+            ? {
+                sha: operation.sha,
+                ...(operation.action ? {action: operation.action} : {}),
+                ...(operation.reviewId ? {reviewId: operation.reviewId} : {}),
+              }
+            : {}),
         },
         traceId,
       );
@@ -249,7 +303,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       view = approval
         ? {
             kind: 'uncertain',
-            label: 'Approval result unknown. Reload the page to check its review history',
+            label: 'Review result unknown. Reload the page to check its review history',
             sha: operation.sha,
           }
         : {kind: 'error', label: 'Quick Approve disconnected. Reload this page to reconnect'};
@@ -274,6 +328,19 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       durationMs: performance.now() - token.started,
     });
     await completion;
+    if (
+      accepted &&
+      approval &&
+      operation.reviewId &&
+      ['approved', 'changes-requested', 'commented'].includes(view.kind) &&
+      controller.epoch === token.epoch &&
+      prRoute() === operation.context.route &&
+      pageUser() === operation.context.pageUser
+    ) {
+      // GitHub owns the pending-comment count and review editor state. Re-fetch them
+      // after confirmed submission rather than cosmetically changing its DOM.
+      location.reload();
+    }
   }
 
   async function activate() {
@@ -312,11 +379,18 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       stateSince = performance.now();
       stallWatchdog.start();
     }
-    const label = controller.phase === 'approving' ? 'Approving…' : controller.view.label;
+    const label =
+      controller.phase === 'approving'
+        ? controller.reviewId
+          ? 'Submitting review…'
+          : 'Approving…'
+        : controller.view.label;
     const disabled = [
       'loading',
       'busy',
       'approved',
+      'changes-requested',
+      'commented',
       'merged',
       'closed',
       'own',
@@ -326,21 +400,31 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     button.dataset.state = kind;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-disabled', String(disabled));
+    if (controller.view.shortcutEnabled === true && !disabled)
+      button.setAttribute('aria-keyshortcuts', 'Shift+L');
+    else button.removeAttribute('aria-keyshortcuts');
     button.setAttribute('aria-busy', String(['loading', 'busy'].includes(kind)));
-    const iconName = ['setup', 'invalid'].includes(kind)
-      ? 'key'
-      : ['loading', 'busy'].includes(kind)
-        ? 'spinner'
-        : ['own', 'pending', 'account', 'access'].includes(kind)
-          ? 'lock'
-          : ['error', 'uncertain', 'changed', 'canceled'].includes(kind)
-            ? 'alert'
-            : kind;
+    const iconName =
+      kind === 'available' && controller.view.reviewId
+        ? controller.view.action === 'approve'
+          ? 'approve-review'
+          : (controller.view.action ?? 'available')
+        : ['setup', 'invalid'].includes(kind)
+          ? 'key'
+          : ['loading', 'busy'].includes(kind)
+            ? 'spinner'
+            : ['own', 'pending', 'account', 'access'].includes(kind)
+              ? 'lock'
+              : ['error', 'uncertain', 'changed', 'canceled'].includes(kind)
+                ? 'alert'
+                : kind;
     if (button.dataset.icon !== iconName) {
       button.dataset.icon = iconName;
       button.replaceChildren(makeIcon(iconName));
     }
-    if (tooltip.textContent !== label) tooltip.textContent = label;
+    const tooltipLabel =
+      controller.view.shortcutEnabled === true && !disabled ? `${label} (Shift+L)` : label;
+    if (tooltip.textContent !== tooltipLabel) tooltip.textContent = tooltipLabel;
     if (tooltip.matches(':popover-open')) positionTooltip();
   }
 
@@ -368,8 +452,9 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     svg.setAttribute('height', '16');
     svg.setAttribute('fill', 'none');
     svg.setAttribute('stroke', 'currentColor');
-    if (name === 'available' || name === 'approved') {
+    if (['approved', 'changes-requested', 'commented'].includes(name)) {
       svg.setAttribute('fill', 'currentColor');
+      svg.setAttribute('fill-rule', 'evenodd');
       svg.setAttribute('stroke', 'none');
     }
     svg.setAttribute('stroke-width', '1.6');
@@ -377,9 +462,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     const paths: Record<string, string[]> = {
-      available: [
-        'M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-8.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Zm5.28 1.72a.75.75 0 0 1 0 1.06L5.31 7l1.47 1.47a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-2-2a.75.75 0 0 1 0-1.06l2-2a.75.75 0 0 1 1.06 0Zm2.44 0a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L10.69 7 9.22 5.53a.75.75 0 0 1 0-1.06Z',
-      ],
+      available: ['M3 8l3 3 7-7'],
       approved: [
         'M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16Zm3.78-9.72a.751.751 0 0 0-.018-1.042.751.751 0 0 0-1.042-.018L6.75 9.19 5.28 7.72a.751.751 0 0 0-1.042.018.751.751 0 0 0-.018 1.042l2 2a.75.75 0 0 0 1.06 0Z',
       ],
@@ -397,6 +480,11 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
         'M10 5l4 6m0-6-4 6',
       ],
       lock: ['M4 7V5a4 4 0 0 1 8 0v2', 'M3 7h10v7H3z'],
+      changes: ['M4 5h8', 'M8 2v6', 'M4 12h8'],
+      'changes-requested': ['M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16ZM4 7.25h8v1.5H4z'],
+      comment: ['M2 2h12v9H7l-4 3v-3H2z'],
+      commented: ['M2 2h12v9H7l-4 3v-3H2z'],
+      'approve-review': ['M3 8l3 3 7-7'],
       key: ['M8.5 5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0', 'M8 7.5l6.5 6.5m-2-2 2-2m-4 0 2-2'],
       spinner: ['M14 8a6 6 0 1 1-4-5.66'],
       alert: ['M8 1.5 15 14H1z', 'M8 6v3.5', 'M8 12v.1'],
@@ -424,7 +512,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     if (controller.view.kind === 'uncertain') {
       const warning = document.createElement('p');
       warning.textContent =
-        'Allowing another attempt may create a duplicate approval. Check GitHub first.';
+        'Allowing another attempt may create a duplicate review. Check GitHub first.';
       panel.append(warning);
       const history = document.createElement('a');
       history.href = `https://github.com${prRoute()}`;

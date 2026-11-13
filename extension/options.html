@@ -10,10 +10,9 @@
   <body>
     <main>
       <header>
-        <div class="mark" aria-hidden="true">✓</div>
         <div>
           <h1>GitHub Quick Approve</h1>
-          <p>One click. Review approved.</p>
+          <p>Review shortcuts for GitHub pull requests.</p>
         </div>
       </header>
       <section class="card" aria-labelledby="connection-heading">
@@ -48,6 +47,83 @@
           <p>You’re connected. Return to your PR and click the amber review button to approve.</p>
           <button id="return-button" type="button">Return to your PR</button>
         </div>
+      </section>
+      <section class="card review-preferences" aria-labelledby="review-preference-heading">
+        <h2 id="review-preference-heading">Pending review</h2>
+        <p class="description">
+          Choose what the header button does with your unsubmitted comments.
+        </p>
+        <fieldset id="review-preferences" disabled>
+          <legend>When you have a pending review</legend>
+          <div class="review-choices">
+            <label class="review-choice">
+              <input type="radio" name="pending-review-action" value="lock" checked />
+              <span class="review-copy"
+                ><span class="review-name"
+                  >Keep locked <span class="default-badge">Default</span></span
+                ><span class="review-description">Finish your review in GitHub.</span></span
+              >
+              <span class="review-icon" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M4 7V5a4 4 0 0 1 8 0v2M3 7h10v7H3z" /></svg
+              ></span>
+            </label>
+            <label class="review-choice">
+              <input type="radio" name="pending-review-action" value="changes" />
+              <span class="review-copy"
+                ><span class="review-name">Request changes</span
+                ><span class="review-description"
+                  >Publish comments and request changes in one click.</span
+                ></span
+              >
+              <span class="review-icon" data-action="changes" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M4 5h8M8 2v6M4 12h8" /></svg
+              ></span>
+            </label>
+            <label class="review-choice">
+              <input type="radio" name="pending-review-action" value="comment" />
+              <span class="review-copy"
+                ><span class="review-name">Comment</span
+                ><span class="review-description"
+                  >Publish comments without approving or requesting changes.</span
+                ></span
+              >
+              <span class="review-icon" data-action="comment" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M2 2h12v9H7l-4 3v-3H2z" /></svg
+              ></span>
+            </label>
+            <label class="review-choice">
+              <input type="radio" name="pending-review-action" value="approve" />
+              <span class="review-copy"
+                ><span class="review-name">Approve</span
+                ><span class="review-description"
+                  >Publish comments and approve in one click.</span
+                ></span
+              >
+              <span class="review-icon" data-action="approve" aria-hidden="true"
+                ><svg viewBox="0 0 16 16"><path d="M3 8l3 3 7-7" /></svg
+              ></span>
+            </label>
+          </div>
+        </fieldset>
+        <p class="review-help">
+          One-click actions submit your pending review and publish its comments. Text you have not
+          saved in GitHub’s editor is not included.
+        </p>
+        <p id="review-preference-status" role="status" aria-live="polite">
+          Loading review preference…
+        </p>
+      </section>
+      <section class="card shortcut-preferences" aria-labelledby="shortcut-heading">
+        <h2 id="shortcut-heading">Keyboard shortcut</h2>
+        <label class="shortcut-toggle"
+          ><input id="shortcut-enabled" type="checkbox" disabled />Enable
+          <kbd>Shift+L</kbd> shortcut</label
+        >
+        <p class="review-help">
+          Runs the current header-button action. Ignored while typing in an editor or form field.
+          Off by default.
+        </p>
+        <p id="shortcut-status" role="status" aria-live="polite">Loading shortcut preference…</p>
       </section>
       <section class="instructions" aria-labelledby="token-heading">
         <h2 id="token-heading">Create a token</h2>

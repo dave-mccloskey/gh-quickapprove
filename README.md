@@ -1,6 +1,6 @@
 # GitHub Quick Approve
 
-Adds a compact amber review button beside **Submit review** in GitHub’s new PR interface. Click once to approve immediately. The button shows when you have already approved, the PR is merged or closed, or approval is unavailable.
+Adds a compact amber checkmark button beside **Submit review** in GitHub’s new PR interface. Click once to approve immediately. The button shows when you have already approved, the PR is merged or closed, or approval is unavailable.
 
 ## Build & install
 
@@ -23,11 +23,19 @@ Settings show the connected account after validation. Return to the PR and click
 
 A compatible classic token also works; private repositories require the broader `repo` scope. A fine-grained token limits the grant to the selected owner and permissions.
 
+## Keyboard shortcut
+
+The shortcut is off by default. In settings, enable **Shift+L shortcut** to run the current header-button action on a supported PR page. It uses the same review preference and safety checks as a click. The tooltip shows the shortcut when enabled.
+
+Shift+L is ignored while typing in inputs, comment editors, and other editable fields, and when the header button is unavailable. Holding the key does not repeat the action. Turning the option off updates open PR tabs.
+
 ## Approval & recovery
 
-The extension leaves pending draft reviews untouched; finish those in GitHub. A changed commit requires reviewing the new changes and clicking again. Already approved, own, merged, and closed PRs show distinct inactive states. Hover or focus the button for the explanation.
+By default, a pending draft review shows a disabled lock; finish it in GitHub. In settings, **Pending review** lets you choose **Request changes** (red plus/minus), **Comment** (blue speech bubble), or **Approve** (amber checkmark) instead. One click submits your existing pending review and publishes its saved comments. Text you have not saved in GitHub’s editor is not included. Available approval actions use an amber checkmark; a completed approval uses a solid green circle-check without button styling. After a confirmed pending-review submission, the extension refreshes the current PR so GitHub clears its native pending-comment count and updates its review controls (preserving scroll position). Unknown outcomes stay on the page for recovery. The preference stays in this Chrome profile and applies to your pending review, rather than other people’s unresolved conversation threads. Changing the setting does not submit a review.
 
-If an approval request has an uncertain result, the extension blocks another attempt even after a browser restart. Open the review history and use **Recheck**. **Allow another attempt** acknowledges that a retry may create a duplicate; it only clears the block. A separate click is required to approve again.
+A changed commit requires reviewing the new changes and clicking again. Already approved, own, merged, and closed PRs show distinct inactive states. Hover or focus the button for the explanation.
+
+If a review request has an uncertain result, the extension blocks another attempt even after a browser restart. Open the review history and use **Recheck**. **Allow another attempt** acknowledges that a retry may create a duplicate; it only clears the block. A separate click is required to approve again.
 
 The token is stored only in this Chrome profile and sent only to GitHub’s API. Local storage is not an encrypted vault. Removing the token in settings does not revoke it at GitHub. A compromised browser, extension, local profile, or GitHub page remains a security risk; the [security design](docs/superpowers/specs/2026-11-10-quick-approve-design.md#security) describes the boundaries.
 

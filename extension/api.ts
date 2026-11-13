@@ -55,7 +55,9 @@ export function createApi(
       // A mutation can succeed partially; its errors cannot establish a definite rejection.
       if (result.errors?.length) {
         const types = result.errors.map((error) => error.type);
-        const status = endpoint === 'approve' ? undefined : graphErrorStatus(types);
+        const status = ['approve', 'submitReview'].includes(endpoint)
+          ? undefined
+          : graphErrorStatus(types);
         throw new GitHubError(status, types.includes('RATE_LIMITED'));
       }
       if (!result.data) throw new Error('Missing GitHub data');
@@ -80,6 +82,20 @@ export function createApi(
     }
   }
   return {
+    submitReview: async (reviewId, action, token, traceId) => {
+      const events = {changes: 'REQUEST_CHANGES', comment: 'COMMENT', approve: 'APPROVE'};
+      if (!reviewId || !Object.hasOwn(events, action)) throw new Error('Invalid review submission');
+      const data = await request<SubmissionData>(
+        submitReviewMutation,
+        {reviewId, event: events[action]},
+        token,
+        'submitReview',
+        traceId,
+      );
+      const review = data.submitPullRequestReview?.pullRequestReview;
+      if (!review || typeof review.state !== 'string') throw new Error('Invalid GitHub review');
+      return {id: databaseId(review.fullDatabaseId), state: review.state};
+    },
     user: async (token, traceId) => {
       const data = await request<{viewer: GraphUser | null}>(userQuery, {}, token, 'user', traceId);
       if (!data.viewer?.login) throw new Error('Invalid GitHub identity');
@@ -190,6 +206,7 @@ function reviewMetadata(review: GraphReview | null | undefined): Review {
   if (!review || typeof review.state !== 'string') throw new Error('Invalid GitHub review');
   return {
     id: databaseId(review.fullDatabaseId),
+    ...(typeof review.id === 'string' && review.id ? {nodeId: review.id} : {}),
     state: review.state,
     user: authorIdentity(review.author),
   };
@@ -228,6 +245,7 @@ interface PullData {
 }
 
 interface GraphReview {
+  id?: string;
   fullDatabaseId: string | null;
   state: string;
   author: {databaseId?: number | null} | null;
@@ -250,11 +268,16 @@ interface ApprovalData {
   } | null;
 }
 
+interface SubmissionData {
+  submitPullRequestReview: ApprovalData['addPullRequestReview'];
+}
+
 const operationNames: Record<string, string> = {
   user: 'QuickApproveUser',
   pull: 'QuickApprovePull',
   reviews: 'QuickApproveReviews',
   approve: 'QuickApproveApprove',
+  submitReview: 'QuickApproveSubmitReview',
 };
 
 const userQuery = `query QuickApproveUser {
@@ -275,7 +298,7 @@ const reviewsQuery = `query QuickApproveReviews($owner: String!, $name: String!,
     pullRequest(number: $number) {
       reviews(first: 100, after: $cursor, author: $author) {
         nodes {
-          fullDatabaseId state
+          id fullDatabaseId state
           author { ... on User { databaseId } }
         }
         pageInfo { hasNextPage endCursor }
@@ -286,6 +309,12 @@ const reviewsQuery = `query QuickApproveReviews($owner: String!, $name: String!,
 
 const approveMutation = `mutation QuickApproveApprove($pullRequestId: ID!, $commitOid: GitObjectID!) {
   addPullRequestReview(input: {pullRequestId: $pullRequestId, commitOID: $commitOid, event: APPROVE}) {
+    pullRequestReview { fullDatabaseId state }
+  }
+}`;
+
+const submitReviewMutation = `mutation QuickApproveSubmitReview($reviewId: ID!, $event: PullRequestReviewEvent!) {
+  submitPullRequestReview(input: {pullRequestReviewId: $reviewId, event: $event}) {
     pullRequestReview { fullDatabaseId state }
   }
 }`;
