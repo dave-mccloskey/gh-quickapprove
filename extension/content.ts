@@ -130,7 +130,17 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       if (!document.hidden && controller.phase !== 'approving')
         void refresh('state', false, 'visibility');
     });
-    window.navigation?.addEventListener('navigate', () => {
+    window.navigation?.addEventListener('navigate', (event) => {
+      const destination = new URL(event.destination.url);
+      // GitHub updates diff anchors and scroll history without changing the PR context.
+      // Keep the current request and accepted view across those same-page updates.
+      if (
+        event.destination.sameDocument &&
+        destination.origin === location.origin &&
+        destination.pathname === location.pathname &&
+        destination.search === location.search
+      )
+        return;
       recordDiagnostic('ui.route', {reason: 'navigation', generation: controller.epoch});
       void dispatch({type: 'reset', now: performance.now()});
       schedule();

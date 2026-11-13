@@ -1021,6 +1021,33 @@ test('Back returns from a label page to a usable PR control', async () => {
   expect(server.posts).toHaveLength(0);
 });
 
+test('diff hash updates preserve an in-flight approval check', async () => {
+  await connect();
+  let release;
+  server.readGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const page = await context.newPage();
+  await page.goto('https://github.com/example/widget/pull/23/changes');
+  const control = page.locator('[data-quickapprove-root] button');
+  await expect(control).toHaveAttribute('data-state', 'loading');
+  await expect.poll(() => server.readRequests ?? 0).toBe(1);
+  for (let index = 0; index < 8; index++) {
+    await page.evaluate((index) => {
+      history.replaceState({}, '', `#diff-${index}`);
+    }, index);
+    await page.evaluate(() => new Promise(requestAnimationFrame));
+  }
+  release();
+  await expect(control).toHaveAttribute('data-state', 'available');
+  expect(server.readRequests).toBe(2);
+  // Replacing history state at the same URL must preserve the accepted view too.
+  await page.evaluate(() => history.replaceState({scroll: 100}, '', location.href));
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  await expect(control).toHaveAttribute('data-state', 'available');
+  expect(server.readRequests).toBe(2);
+});
+
 test('restoring a cached PR replaces a state request whose reply was lost', async () => {
   await connect();
   const page = await context.newPage();
