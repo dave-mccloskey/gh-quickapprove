@@ -1371,7 +1371,9 @@ for (const [choice, action, event, label, icon] of [
     await settings.reload();
     await expect(settings.getByRole('radio', {name: new RegExp('^' + choice)})).toBeChecked();
     await control.focus();
-    await page.keyboard.press('Enter');
+    // Submission refreshes GitHub's native review state. Wait for that navigation
+    // before issuing the explicit reload below so the two reloads cannot race.
+    await Promise.all([page.waitForEvent('domcontentloaded'), page.keyboard.press('Enter')]);
     await expect.poll(() => server.posts.length).toBe(1);
     expect(server.posts[0]).toEqual({reviewId: 'PRR_pending', event});
     expect(server.reviews[0].body).toBe('Saved summary');
