@@ -50,7 +50,7 @@ const service = createService({
       if (sender.tab?.id === undefined || !sender.documentId) return false;
       const tab = await chrome.tabs.get(sender.tab.id);
       const current = parsePrUrl(tab.url ?? '');
-      const original = parsePrUrl(sender.url ?? '');
+      const original = parsePrUrl(sender.tab?.url ?? sender.url ?? '');
       if (!current || current.key !== original?.key) return false;
       const acknowledgment = await chrome.tabs.sendMessage(
         sender.tab.id,
@@ -214,7 +214,7 @@ function senderContext(sender: MessageSender): DiagnosticContext {
   return {
     tabId: sender.tab?.id,
     documentId: sender.documentId,
-    target: parsePrUrl(sender.url ?? '')?.key,
+    target: parsePrUrl(sender.tab?.url ?? sender.url ?? '')?.key,
   };
 }
 

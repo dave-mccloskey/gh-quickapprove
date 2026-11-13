@@ -97,7 +97,13 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
     if (server.readGate) await server.readGate;
     if (server.accessDenied) return route.fulfill({status: 403, json: {message: 'Forbidden'}});
     if (operation === 'QuickApprovePull')
-      return route.fulfill({json: {data: {repository: {pullRequest: server.pr}}}});
+      return route.fulfill({
+        json: {
+          data: {
+            repository: {pullRequest: server.prByNumber?.[payload.variables.number] ?? server.pr},
+          },
+        },
+      });
     expect(operation).toBe('QuickApproveReviews');
     if (server.reviews.length && /\bcommit\s*\{/.test(payload.query)) {
       return route.fulfill({
@@ -443,6 +449,86 @@ test('same-document navigation and header replacement keep exactly one button', 
   await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
   await page.goBack();
   await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+});
+
+test('navigation from a merged PR to an open PR uses the current PR for status and approval', async () => {
+  await connect();
+  server.prByNumber = {
+    23: {...server.pr, state: 'MERGED', merged: true},
+    4573: {...server.pr, id: 'PR_4573', fullDatabaseId: '4573'},
+  };
+  const page = await prPage();
+  await expect(page.getByRole('button', {name: 'This PR is merged', exact: true})).toBeVisible();
+  await page.evaluate(() => {
+    history.pushState({}, '', '/example/widget/pull/4573');
+    document.dispatchEvent(new Event('turbo:load'));
+  });
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  await page.getByRole('button', {name: 'Quick approve', exact: true}).click();
+  await expect(page.getByRole('button', {name: 'You approved this PR', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(1);
+  expect(server.posts[0].pullRequestId).toBe('PR_4573');
+});
+
+test('a delayed status reply cannot replace a completed approval', async () => {
+  const settings = await connect();
+  const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
+  const worlds = [];
+  cdp.on('Runtime.executionContextCreated', ({context: execution}) => worlds.push(execution));
+  await cdp.send('Runtime.enable');
+  await page.goto('https://github.com/example/widget/pull/23');
+  const control = page.locator('[data-quickapprove-root] button');
+  await expect(control).toHaveAttribute('data-state', 'available');
+  const isolated = worlds.find((world) => world.origin === `chrome-extension://${extensionId}`);
+  await cdp.send('Runtime.evaluate', {
+    contextId: isolated.id,
+    expression: `{
+      const original = chrome.runtime.sendMessage.bind(chrome.runtime);
+      let delayed = false;
+      chrome.runtime.sendMessage = (...args) => {
+        const response = original(...args);
+        if (args[0]?.op !== 'state' || delayed) return response;
+        delayed = true;
+        globalThis.delayedReadTrace = args[0].traceId;
+        return response.then(reply => new Promise(resolve => {
+          globalThis.releaseRead = () => resolve(reply);
+        }));
+      };
+    }`,
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect
+    .poll(
+      async () =>
+        (
+          await cdp.send('Runtime.evaluate', {
+            contextId: isolated.id,
+            expression: 'typeof globalThis.releaseRead',
+          })
+        ).result.value,
+    )
+    .toBe('function');
+  await control.click();
+  await expect(control).toHaveAttribute('data-state', 'approved');
+  const {
+    result: {value: traceId},
+  } = await cdp.send('Runtime.evaluate', {
+    contextId: isolated.id,
+    expression: 'globalThis.releaseRead(); globalThis.delayedReadTrace;',
+  });
+  await expect
+    .poll(() =>
+      settings.evaluate(async (trace) => {
+        const {report} = await chrome.runtime.sendMessage({op: 'diagnosticsExport'});
+        return report.events.some(
+          (event) => event.name === 'ui.refresh.end' && event.fields.traceId === trace,
+        );
+      }, traceId),
+    )
+    .toBe(true);
+  await expect(control).toHaveAttribute('data-state', 'approved');
+  expect(server.posts).toHaveLength(1);
 });
 
 test('valid setup refreshes existing PR and invalid candidate preserves saved credential', async () => {
@@ -927,7 +1013,11 @@ test('restoring a cached PR replaces a state request whose reply was lost', asyn
       let dropped = false;
       chrome.runtime.sendMessage = (...args) => {
         const response = original(...args);
-        if (args[0]?.op === 'state' && !dropped) { dropped = true; return new Promise(() => {}); }
+        if (args[0]?.op === 'state' && !dropped) {
+          dropped = true;
+          globalThis.droppedStateReply = true;
+          return new Promise(() => {});
+        }
         return response;
       };
     }`,
@@ -935,6 +1025,18 @@ test('restoring a cached PR replaces a state request whose reply was lost', asyn
   await page.evaluate(() => history.replaceState({}, '', '?labels'));
   const control = page.locator('[data-quickapprove-root] button');
   await expect(control).toHaveAttribute('data-state', 'loading');
+  // Loading is rendered at navigation invalidation, before the next frame sends its read.
+  await expect
+    .poll(
+      async () =>
+        (
+          await cdp.send('Runtime.evaluate', {
+            contextId: isolated.id,
+            expression: 'globalThis.droppedStateReply === true',
+          })
+        ).result.value,
+    )
+    .toBe(true);
   // The routed harness reloads history entries; exercise the cached-document event directly.
   await page.evaluate(() =>
     window.dispatchEvent(new PageTransitionEvent('pageshow', {persisted: true})),

@@ -64,7 +64,7 @@ export interface MessageSender {
   url?: string;
   frameId?: number;
   documentId?: string;
-  tab?: {id?: number};
+  tab?: {id?: number; url?: string};
 }
 
 export interface GitHubApi {

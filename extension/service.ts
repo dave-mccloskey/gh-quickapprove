@@ -344,7 +344,8 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
     !sender.documentId
   )
     throw new Error('Unauthorized PR request');
-  const target = parsePrUrl(sender.url ?? '');
+  // Chrome retains the document's original sender.url after same-document navigation.
+  const target = parsePrUrl(sender.tab?.url ?? sender.url ?? '');
   if (
     !target ||
     typeof message.pageUser !== 'string' ||

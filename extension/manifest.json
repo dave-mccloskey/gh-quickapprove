@@ -11,7 +11,7 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*"],
-      "js": ["build-info.js", "timing-content.js", "watchdog.js", "content.js"],
+      "js": ["build-info.js", "timing-content.js", "watchdog.js", "controller.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle",
       "all_frames": false

@@ -6,7 +6,10 @@ export default [
   {ignores: ['dist/**', 'node_modules/**', 'test-results/**', 'playwright-report/**']},
   js.configs.recommended,
   ...tseslint.configs.recommended,
-  {files: ['extension/watchdog.ts'], languageOptions: {sourceType: 'script'}},
+  {
+    files: ['extension/watchdog.ts', 'extension/controller.ts'],
+    languageOptions: {sourceType: 'script'},
+  },
   {languageOptions: {globals: {...globals.browser, ...globals.node, chrome: 'readonly'}}},
   {
     files: ['extension/**/*.ts'],

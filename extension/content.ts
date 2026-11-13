@@ -2,23 +2,11 @@ declare const quickApproveBuildId: string;
 declare const quickApproveTiming: typeof import('./timing.js').timing;
 
 (() => {
-  let route = '';
-  let observedPageState = '';
-  let refreshAfterSubmission = false;
-  let generation = 0;
-  let requestNumber = 0;
-  let pendingRefresh: {generation: number; request: number; started: number} | undefined;
+  let controller = initialController();
   const root = document.createElement('span');
   const button = document.createElement('button');
   const tooltip = document.createElement('span');
   let panel: HTMLDivElement | undefined;
-  interface ContentState {
-    kind: string;
-    label: string;
-    sha?: string;
-  }
-  let current: ContentState = {kind: 'loading', label: 'Checking approval…'};
-  let submitting = false;
   let scheduled = false;
   const clientId = crypto.randomUUID();
   let stateSince = performance.now();
@@ -27,7 +15,10 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
   let discarded = 0;
   let diagnosticFailures = 0;
   const stallWatchdog = createStallWatchdog(quickApproveTiming.uiStallMs, () => {
-    if (root.isConnected && (current?.kind === 'loading' || submitting))
+    if (
+      root.isConnected &&
+      (controller.view.kind === 'loading' || controller.phase === 'approving')
+    )
       recordDiagnostic('ui.stalled', diagnosticSnapshot());
     else stallWatchdog.stop();
   });
@@ -57,12 +48,12 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
         reconcile();
         respond({
           current:
-            generation === message.generation &&
+            controller.epoch === message.generation &&
             pageUser() === message.pageUser &&
-            (!message.sha || current.sha === message.sha) &&
+            (!message.sha || controller.view.sha === message.sha) &&
             Boolean(prRoute()),
         });
-      } else if (message.op === 'refreshState' && !submitting) {
+      } else if (message.op === 'refreshState' && controller.phase !== 'approving') {
         void refresh('state', true, 'notification');
       }
     });
@@ -83,8 +74,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     window.addEventListener('pageshow', (event) => {
       if (!event.persisted) return;
       // Cached documents can retain a runtime message whose reply was lost while frozen.
-      pendingRefresh = undefined;
-      route = '';
+      void dispatch({type: 'reset', now: performance.now()});
       stallWatchdog.stop();
       reconcile();
     });
@@ -95,19 +85,16 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     });
     window.addEventListener('focus', () => {
       recordDiagnostic('ui.visibility', {visible: !document.hidden});
-      if (!submitting) void refresh('state', false, 'focus');
+      if (controller.phase !== 'approving') void refresh('state', false, 'focus');
     });
     document.addEventListener('visibilitychange', () => {
       recordDiagnostic('ui.visibility', {visible: !document.hidden});
-      if (!document.hidden && !submitting) void refresh('state', false, 'visibility');
+      if (!document.hidden && controller.phase !== 'approving')
+        void refresh('state', false, 'visibility');
     });
     window.navigation?.addEventListener('navigate', () => {
-      recordDiagnostic('ui.route', {reason: 'navigation', generation});
-      submitting = false;
-      route = '';
-      generation++;
-      requestNumber++;
-      current = {kind: 'loading', label: 'Checking approval…'};
+      recordDiagnostic('ui.route', {reason: 'navigation', generation: controller.epoch});
+      void dispatch({type: 'reset', now: performance.now()});
       schedule();
     });
     window.navigation?.addEventListener('currententrychange', () => schedule());
@@ -125,27 +112,24 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
 
   function reconcile() {
     const next = prRoute();
-    const identity = `${next}|${pageUser()}`;
-    const changed = identity !== route;
+    const context = next ? {route: next, pageUser: pageUser()} : null;
+    const changed =
+      context?.route !== controller.context?.route ||
+      context?.pageUser !== controller.context?.pageUser;
     const status = pageState();
-    const statusChanged = Boolean(status && status !== observedPageState);
-    if (statusChanged) recordDiagnostic('ui.prState', {pageState: status, generation});
-    if (status) observedPageState = status;
+    const statusChanged = Boolean(status && status !== controller.pageState);
+    if (statusChanged)
+      recordDiagnostic('ui.prState', {pageState: status, generation: controller.epoch});
+    void dispatch(
+      {type: 'observe', context, pageState: status, now: performance.now()},
+      statusChanged && !changed ? 'page-state' : 'route',
+    );
     if (changed) {
-      route = identity;
-      observedPageState = status;
-      refreshAfterSubmission = false;
-      generation++;
-      requestNumber++;
-      submitting = false;
-      current = {kind: 'loading', label: 'Checking approval…'};
       recordDiagnostic('ui.route', {
         reason: 'route',
-        generation,
+        generation: controller.epoch,
         pageUserPresent: Boolean(pageUser()),
       });
-      closePanel();
-      hideTooltip();
     }
     if (!next) {
       root?.remove();
@@ -165,14 +149,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
         Number.parseFloat(getComputedStyle(anchor.parentElement ?? anchor).columnGap) || 0;
       root.style.marginInlineStart = `${Math.max(0, 8 - gap)}px`;
     }
-    if (statusChanged && submitting) refreshAfterSubmission = true;
     render();
-    if (changed || statusChanged || current.kind === 'loading')
-      void refresh(
-        'state',
-        statusChanged,
-        statusChanged ? 'page-state' : changed ? 'route' : 'initial',
-      );
   }
 
   function findAnchor() {
@@ -210,134 +187,132 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     root.append(button, tooltip);
   }
 
-  async function refresh(op = 'state', force = false, reason = 'unknown') {
-    if (!prRoute() || (submitting && op === 'state')) return;
-    // Page mutations must not supersede every slow response and starve the ready state.
-    if (!force && op === 'state' && pendingRefresh?.generation === generation) {
-      suppressed++;
-      return;
-    }
-    const request = ++requestNumber;
-    const capturedGeneration = generation;
-    const traceId = crypto.randomUUID();
-    const started = performance.now();
-    let outcome = 'ok';
-    pendingRefresh = {generation, request, started};
-    recordDiagnostic('ui.refresh.begin', {
-      spanId: traceId,
-      traceId,
-      op,
-      reason,
-      generation,
-      request,
-    });
-    try {
-      const result = await send({op, generation, pageUser: pageUser()}, traceId);
-      if (capturedGeneration !== generation || request !== requestNumber) {
-        outcome = 'superseded';
-        discarded++;
-        return;
-      }
-      current = result;
-    } catch {
-      outcome = 'error';
-      if (capturedGeneration !== generation || request !== requestNumber) {
-        outcome = 'superseded';
-        discarded++;
-        return;
-      }
-      current = {kind: 'error', label: 'Quick Approve disconnected. Reload this page to reconnect'};
-    } finally {
-      if (pendingRefresh?.request === request) pendingRefresh = undefined;
-      recordDiagnostic('ui.refresh.end', {
-        spanId: traceId,
-        traceId,
-        op,
-        generation,
-        request,
-        outcome,
-        state: current?.kind,
-        durationMs: performance.now() - started,
-      });
+  function refresh(op: ControllerRead = 'state', force = false, reason = 'unknown') {
+    const previous = controller;
+    const result = dispatch({type: 'refresh', op, force, now: performance.now()}, reason);
+    if (controller === previous && controller.phase === 'reading') suppressed++;
+    return result;
+  }
+
+  function activeToken(token: ControllerToken) {
+    return (
+      (controller.phase === 'reading' || controller.phase === 'approving') &&
+      controller.operation.epoch === token.epoch &&
+      controller.operation.number === token.number
+    );
+  }
+
+  function dispatch(event: ControllerEvent, reason = 'unknown'): Promise<void> {
+    const previous = controller;
+    controller = transitionController(controller, event);
+    if (controller === previous) return Promise.resolve();
+    if (controller.epoch !== previous.epoch) {
+      closePanel();
+      hideTooltip();
     }
     render();
+    if (
+      (controller.phase === 'reading' || controller.phase === 'approving') &&
+      (!(previous.phase === 'reading' || previous.phase === 'approving') ||
+        previous.operation.number !== controller.operation.number ||
+        previous.operation.epoch !== controller.operation.epoch)
+    )
+      return runOperation(controller, reason);
+    return Promise.resolve();
+  }
+
+  async function runOperation(
+    operation: Extract<ControllerState, {phase: 'reading' | 'approving'}>,
+    reason: string,
+  ) {
+    const approval = operation.phase === 'approving';
+    const op = approval ? 'approve' : operation.op;
+    const token = operation.operation;
+    const traceId = crypto.randomUUID();
+    const name = approval ? 'ui.approval' : 'ui.refresh';
+    const fields = {generation: token.epoch, request: token.number, op};
+    recordDiagnostic(`${name}.begin`, {...fields, reason, spanId: traceId, traceId});
+    let outcome = 'ok';
+    let view: ControllerView;
+    try {
+      view = await send(
+        {
+          op,
+          generation: token.epoch,
+          pageUser: operation.context.pageUser,
+          ...(approval ? {sha: operation.sha} : {}),
+        },
+        traceId,
+      );
+    } catch {
+      outcome = 'error';
+      view = approval
+        ? {
+            kind: 'uncertain',
+            label: 'Approval result unknown. Reload the page to check its review history',
+            sha: operation.sha,
+          }
+        : {kind: 'error', label: 'Quick Approve disconnected. Reload this page to reconnect'};
+    }
+    // Effects return through the same guarded transition as every other event.
+    // A deferred refresh is issued by that transition, after approval has finished.
+    const accepted = activeToken(token);
+    if (!accepted) {
+      outcome = 'superseded';
+      discarded++;
+    }
+    const completion = dispatch(
+      {type: 'complete', token, view, now: performance.now()},
+      'deferred',
+    );
+    recordDiagnostic(`${name}.end`, {
+      ...fields,
+      spanId: traceId,
+      traceId,
+      outcome,
+      state: controller.view.kind,
+      durationMs: performance.now() - token.started,
+    });
+    await completion;
   }
 
   async function activate() {
     reconcile();
-    if (['setup', 'invalid', 'account'].includes(current.kind)) {
-      await send({op: 'openSettings', generation, pageUser: pageUser()});
+    if (['setup', 'invalid', 'account'].includes(controller.view.kind)) {
+      await send({op: 'openSettings', generation: controller.epoch, pageUser: pageUser()});
       return;
     }
-    if (['error', 'access', 'uncertain', 'changed', 'canceled'].includes(current.kind)) {
+    if (['error', 'access', 'uncertain', 'changed', 'canceled'].includes(controller.view.kind)) {
       showPanel();
       return;
     }
-    if (current.kind !== 'available' || submitting) return;
-    submitting = true;
-    const approvalTrace = crypto.randomUUID();
-    const approvalStart = performance.now();
-    recordDiagnostic('ui.approval.begin', {
-      spanId: approvalTrace,
-      traceId: approvalTrace,
-      generation,
-    });
-    const capturedGeneration = generation;
-    const sha = current.sha;
-    render();
-    try {
-      const result = await send(
-        {
-          op: 'approve',
-          generation,
-          pageUser: pageUser(),
-          sha,
-        },
-        approvalTrace,
-      );
-      if (capturedGeneration !== generation) return;
-      current = result;
-    } catch {
-      if (capturedGeneration !== generation) return;
-      current = {
-        kind: 'uncertain',
-        label: 'Approval result unknown. Reload the page to check its review history',
-        sha,
-      };
-    } finally {
-      recordDiagnostic('ui.approval.end', {
-        spanId: approvalTrace,
-        traceId: approvalTrace,
-        generation,
-        state: current?.kind,
-        durationMs: performance.now() - approvalStart,
-      });
-      if (capturedGeneration === generation) {
-        submitting = false;
-        render();
-        if (refreshAfterSubmission) {
-          refreshAfterSubmission = false;
-          void refresh('state', true);
-        }
-      }
-    }
-    if (['error', 'access', 'uncertain', 'changed', 'canceled'].includes(current.kind)) showPanel();
+    const epoch = controller.epoch;
+    await dispatch({type: 'approve', now: performance.now()}, 'activation');
+    if (
+      epoch === controller.epoch &&
+      ['error', 'access', 'uncertain', 'changed', 'canceled'].includes(controller.view.kind)
+    )
+      showPanel();
   }
 
   function render() {
     if (!button) return;
-    const kind = submitting ? 'busy' : current.kind;
+    const kind = controller.phase === 'approving' ? 'busy' : controller.view.kind;
     if (kind !== lastRenderedState) {
       lastRenderedState = kind;
       stateSince = performance.now();
       stallWatchdog.stop();
-      recordDiagnostic('ui.control', {state: kind, generation, mounted: root.isConnected});
+      recordDiagnostic('ui.control', {
+        state: kind,
+        generation: controller.epoch,
+        mounted: root.isConnected,
+      });
     }
     if ((kind === 'loading' || kind === 'busy') && root.isConnected && !stallWatchdog.active) {
       stateSince = performance.now();
       stallWatchdog.start();
     }
-    const label = submitting ? 'Approving…' : current.label;
+    const label = controller.phase === 'approving' ? 'Approving…' : controller.view.label;
     const disabled = [
       'loading',
       'busy',
@@ -442,11 +417,11 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     panel.setAttribute('popover', 'manual');
     panel.role = 'alert';
     const activePanel = panel;
-    const panelGeneration = generation;
+    const panelGeneration = controller.epoch;
     const text = document.createElement('p');
-    text.textContent = current.label;
+    text.textContent = controller.view.label;
     panel.append(text);
-    if (current.kind === 'uncertain') {
+    if (controller.view.kind === 'uncertain') {
       const warning = document.createElement('p');
       warning.textContent =
         'Allowing another attempt may create a duplicate approval. Check GitHub first.';
@@ -459,11 +434,11 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       panel.append(history);
       panelAction('Recheck', async () => {
         await refresh('recheck');
-        if (panel === activePanel && generation === panelGeneration) showPanel();
+        if (panel === activePanel && controller.epoch === panelGeneration) showPanel();
       });
       panelAction('Allow another attempt', async () => {
         await refresh('resetAttempt');
-        if (panel === activePanel && generation === panelGeneration) closePanel();
+        if (panel === activePanel && controller.epoch === panelGeneration) closePanel();
       });
     } else {
       panelAction('Retry', async () => {
@@ -471,7 +446,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
         await refresh();
       });
       panelAction('Settings', async () => {
-        await send({op: 'openSettings', generation, pageUser: pageUser()});
+        await send({op: 'openSettings', generation: controller.epoch, pageUser: pageUser()});
       });
     }
     panelAction('Dismiss', async () => closePanel());
@@ -526,18 +501,18 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     return {
       clientId,
       buildId: typeof quickApproveBuildId === 'string' ? quickApproveBuildId : undefined,
-      state: submitting ? 'busy' : current?.kind,
-      pageState: observedPageState || 'unknown',
-      generation,
-      request: requestNumber,
-      pendingRefresh: Boolean(pendingRefresh),
-      submitting,
+      state: controller.phase === 'approving' ? 'busy' : controller.view.kind,
+      pageState: controller.pageState || 'unknown',
+      generation: controller.epoch,
+      request: controller.sequence,
+      pendingRefresh: controller.phase === 'reading',
+      submitting: controller.phase === 'approving',
       durationMs: performance.now() - stateSince,
-      waitMs: pendingRefresh ? performance.now() - pendingRefresh.started : 0,
+      waitMs: controller.phase === 'reading' ? performance.now() - controller.operation.started : 0,
       suppressed,
       discarded,
       diagnosticFailures,
-      deferredRefresh: refreshAfterSubmission,
+      deferredRefresh: controller.phase === 'approving' && controller.deferredRefresh,
       watchdogActive: stallWatchdog.active,
       visible: !document.hidden,
       online: navigator.onLine,
