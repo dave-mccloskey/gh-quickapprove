@@ -8,6 +8,7 @@
   --link: #58a6ff;
   --green: #3fb950;
   --red: #f85149;
+  --amber: #d29922;
 }
 .diagnostics {
   margin-top: 32px;
@@ -59,17 +60,6 @@ h1 {
 header p {
   margin: 2px 0 0;
   color: var(--muted);
-}
-.mark {
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  font-size: 32px;
-  color: var(--green);
-  background: #2ea0431a;
-  border: 1px solid #2ea04366;
-  border-radius: 12px;
 }
 h2 {
   font-size: 16px;
@@ -229,6 +219,7 @@ footer {
     --link: #0969da;
     --green: #1a7f37;
     --red: #cf222e;
+    --amber: #9a6700;
   }
 }
 @media (max-width: 480px) {
@@ -345,7 +336,7 @@ footer {
   color: var(--link);
 }
 .review-icon[data-action='approve'] {
-  color: var(--green);
+  color: var(--amber);
 }
 .review-icon[data-action] {
   background: color-mix(in srgb, currentColor 8%, var(--background));

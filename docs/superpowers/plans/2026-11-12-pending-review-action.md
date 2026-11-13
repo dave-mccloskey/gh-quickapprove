@@ -68,3 +68,12 @@ Review: native radio selection lost focus while saving because the fieldset was 
 Ruling: keep the completed feature on its local feature branch. No remote write or deployment is needed for the authorized implementation.
 
 Final verification: `npm run check` passed with lint/format checks, 73 unit tests, 9 integration/package tests, and 56 installed-extension browser tests. Visually inspected the dark desktop and light mobile settings and request-changes header screenshots; rows, icons, wrapping, and tooltip placement fit the approved design. GitHub responses use controlled fixtures; no live review was submitted.
+
+
+## UX and native-review synchronization follow-up
+
+UX reviewed settings branding, all actionable review controls, all completed states, and native GitHub pending-review feedback together. Implemented the compact recommendation documented in the spec, with the before/after comparison saved at `docs/superpowers/specs/assets/review-icon-system.html`.
+
+Reproduced the stale native pending count through the installed extension: the API accepted the review while the page retained “Submit review 1.” The extension now reloads the current PR after confirmed pending-review submission. Browser tests verify the pending count clears, scroll remains at the same position, unknown results do not refresh automatically, and a late success from another PR cannot refresh the current document.
+
+An independent code review found no additional production issues. Final `npm run check` passed: lint/format, 73 unit tests, 9 integration/package tests, and 61 browser tests. Inspected the actual dark settings header, approved status, and light mobile settings, alongside the UX mock. `npm run package` rebuilt the distributable.

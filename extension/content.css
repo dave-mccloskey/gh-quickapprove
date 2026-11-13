@@ -179,9 +179,9 @@
   border-color: var(--borderColor-accent-muted, rgba(68, 147, 248, 0.4));
 }
 .qa-root > button.qa-button[data-state][data-icon='approve-review'] {
-  color: var(--fgColor-success, #3fb950);
-  background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15));
-  border-color: var(--borderColor-success-muted, rgba(46, 160, 67, 0.4));
+  color: var(--fgColor-attention, #d29922);
+  background: var(--bgColor-attention-muted, rgba(187, 128, 9, 0.08));
+  border-color: var(--borderColor-attention-muted, rgba(187, 128, 9, 0.4));
 }
 .qa-root
   > button.qa-button[data-state][data-icon]:is(
@@ -190,4 +190,16 @@
     [data-icon='approve-review']
   ):hover {
   background: color-mix(in srgb, currentColor 12%, var(--bgColor-muted, #212830));
+}
+
+/* Completed reviews are inert status marks; only available actions have button chrome. */
+.qa-root
+  > button.qa-button[data-state]:is(
+    [data-state='approved'],
+    [data-state='changes-requested'],
+    [data-state='commented']
+  ) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
 }

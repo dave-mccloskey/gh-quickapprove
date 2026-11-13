@@ -65,9 +65,22 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
   extensionId = new URL(worker.url()).host;
   const fixture = await readFile('tests/fixtures/pr.html', 'utf8');
-  await context.route('https://github.com/**', (route) =>
-    route.fulfill({contentType: 'text/html', body: fixture}),
-  );
+  await context.route('https://github.com/**', (route) => {
+    let body = fixture;
+    if (server.showNativeReviewState) {
+      const pending = server.reviews.some(
+        (review) =>
+          review.author?.databaseId === server.user.databaseId && review.state === 'PENDING',
+      );
+      body = body.replace('Submit review ▾', pending ? 'Submit review 1 ▾' : 'Submit review ▾');
+      const state = pending ? '1 pending comment' : 'Review submitted';
+      body = body.replace(
+        '<main>',
+        '<main style="min-height:2000px"><p data-testid="native-review-state">' + state + '</p>',
+      );
+    }
+    return route.fulfill({contentType: 'text/html', body});
+  });
   await context.route('https://api.github.com/**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -1400,10 +1413,15 @@ test('a lost pending review reply recovers its submitted review without another 
   await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
   const page = await prPage();
   server.losePostResponse = true;
+  await page.evaluate(() => {
+    window.pendingReloadMarker = true;
+  });
   await page
     .getByRole('button', {name: 'Submit pending comments as a review', exact: true})
     .click();
   await expect.poll(() => server.posts.length).toBe(1);
+  await expect(page.locator('.qa-button')).toHaveAttribute('data-state', 'uncertain');
+  expect(await page.evaluate(() => window.pendingReloadMarker)).toBe(true);
   await page.reload();
   await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
   expect(server.posts).toHaveLength(1);
@@ -1520,4 +1538,121 @@ test('navigation while a pending preference read yields cancels the old review s
     )
     .toBeUndefined();
   expect(server.posts).toHaveLength(0);
+});
+
+for (const [choice, label] of [
+  [/^Request changes/, 'Request changes and submit pending comments'],
+  [/^Comment/, 'Submit pending comments as a review'],
+  [/^Approve/, 'Approve and submit pending comments'],
+]) {
+  test(`confirmed ${label} refreshes GitHub's native pending review controls`, async () => {
+    const settings = await connect();
+    server.showNativeReviewState = true;
+    server.reviews = [
+      {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+    ];
+    await settings.getByRole('radio', {name: choice}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const page = await prPage();
+    await expect(page.getByTestId('review-button')).toHaveText('Submit review 1 ▾');
+    await expect(page.getByTestId('native-review-state')).toHaveText('1 pending comment');
+    await page.evaluate(() => window.scrollTo(0, 500));
+    await page.getByRole('button', {name: label, exact: true}).click();
+    await expect.poll(() => server.posts.length).toBe(1);
+    await expect(page.getByTestId('review-button')).toHaveText('Submit review ▾');
+    await expect(page.getByTestId('native-review-state')).toHaveText('Review submitted');
+    await expect.poll(() => page.evaluate(() => scrollY)).toBe(500);
+    expect(server.posts).toHaveLength(1);
+  });
+}
+
+test('approval actions share amber styling and completed approval is a distinct inert status', async () => {
+  const settings = await connect();
+  await expect(settings.locator('header .mark')).toHaveCount(0);
+  await expect(settings.locator('header')).toContainText(
+    'Review shortcuts for GitHub pull requests.',
+  );
+  const page = await prPage();
+  const ordinary = page.getByRole('button', {name: 'Quick approve', exact: true});
+  await expect(ordinary).toBeVisible();
+  const ordinaryColor = await ordinary.evaluate((button) => getComputedStyle(button).color);
+  const ordinaryPath = await ordinary.locator('path').getAttribute('d');
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Approve/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const pending = page.getByRole('button', {
+    name: 'Approve and submit pending comments',
+    exact: true,
+  });
+  await expect(pending).toBeVisible();
+  expect(await pending.evaluate((button) => getComputedStyle(button).color)).toBe(ordinaryColor);
+  const actionPath = await pending.locator('path').getAttribute('d');
+  expect(ordinaryPath).toBe(actionPath);
+  await pending.click();
+  const completed = page.getByRole('button', {name: 'You approved this PR', exact: true});
+  await expect(completed).toHaveAttribute('aria-disabled', 'true');
+  await expect(completed).toBeVisible();
+  expect(await completed.locator('path').getAttribute('d')).not.toBe(actionPath);
+  const statusStyle = await completed.evaluate((button) => {
+    const style = getComputedStyle(button);
+    return {
+      background: style.backgroundColor,
+      border: style.borderTopColor,
+      color: style.color,
+      cursor: style.cursor,
+    };
+  });
+  expect(statusStyle.background).toBe('rgba(0, 0, 0, 0)');
+  expect(statusStyle.border).toBe('rgba(0, 0, 0, 0)');
+  expect(statusStyle.color).not.toBe(ordinaryColor);
+  expect(statusStyle.cursor).toBe('default');
+  await completed.hover();
+  expect(await completed.evaluate((button) => getComputedStyle(button).backgroundColor)).toBe(
+    'rgba(0, 0, 0, 0)',
+  );
+  await completed.click({force: true});
+  expect(server.posts).toHaveLength(1);
+});
+
+test('a confirmed pending submission from the previous PR cannot reload the current PR', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  let release;
+  server.postGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  await page
+    .getByRole('button', {name: 'Submit pending comments as a review', exact: true})
+    .click();
+  await expect.poll(() => server.posts.length).toBe(1);
+  await page.evaluate(() => {
+    window.pendingReloadMarker = true;
+    history.pushState({}, '', '/example/widget/pull/24');
+    document.dispatchEvent(new Event('turbo:load'));
+  });
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  release();
+  await expect
+    .poll(() =>
+      settings.evaluate(async () => {
+        const tabs = await chrome.tabs.query({url: 'https://github.com/*'});
+        const snapshot = await chrome.tabs.sendMessage(
+          tabs[0].id,
+          {op: 'diagnosticsSnapshot'},
+          {frameId: 0},
+        );
+        return snapshot.discarded;
+      }),
+    )
+    .toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.pendingReloadMarker)).toBe(true);
+  await expect(page).toHaveURL('https://github.com/example/widget/pull/24');
+  expect(server.posts).toHaveLength(1);
 });

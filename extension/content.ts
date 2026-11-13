@@ -280,6 +280,19 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       durationMs: performance.now() - token.started,
     });
     await completion;
+    if (
+      accepted &&
+      approval &&
+      operation.reviewId &&
+      ['approved', 'changes-requested', 'commented'].includes(view.kind) &&
+      controller.epoch === token.epoch &&
+      prRoute() === operation.context.route &&
+      pageUser() === operation.context.pageUser
+    ) {
+      // GitHub owns the pending-comment count and review editor state. Re-fetch them
+      // after confirmed submission rather than cosmetically changing its DOM.
+      location.reload();
+    }
   }
 
   async function activate() {
@@ -386,8 +399,9 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     svg.setAttribute('height', '16');
     svg.setAttribute('fill', 'none');
     svg.setAttribute('stroke', 'currentColor');
-    if (name === 'available' || name === 'approved') {
+    if (['approved', 'changes-requested', 'commented'].includes(name)) {
       svg.setAttribute('fill', 'currentColor');
+      svg.setAttribute('fill-rule', 'evenodd');
       svg.setAttribute('stroke', 'none');
     }
     svg.setAttribute('stroke-width', '1.6');
@@ -395,9 +409,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     const paths: Record<string, string[]> = {
-      available: [
-        'M1.75 1h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 13H8.061l-2.574 2.573A1.458 1.458 0 0 1 3 14.543V13H1.75A1.75 1.75 0 0 1 0 11.25v-8.5C0 1.784.784 1 1.75 1ZM1.5 2.75v8.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h6.5a.25.25 0 0 0 .25-.25v-8.5a.25.25 0 0 0-.25-.25H1.75a.25.25 0 0 0-.25.25Zm5.28 1.72a.75.75 0 0 1 0 1.06L5.31 7l1.47 1.47a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-2-2a.75.75 0 0 1 0-1.06l2-2a.75.75 0 0 1 1.06 0Zm2.44 0a.75.75 0 0 1 1.06 0l2 2a.75.75 0 0 1 0 1.06l-2 2a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L10.69 7 9.22 5.53a.75.75 0 0 1 0-1.06Z',
-      ],
+      available: ['M3 8l3 3 7-7'],
       approved: [
         'M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16Zm3.78-9.72a.751.751 0 0 0-.018-1.042.751.751 0 0 0-1.042-.018L6.75 9.19 5.28 7.72a.751.751 0 0 0-1.042.018.751.751 0 0 0-.018 1.042l2 2a.75.75 0 0 0 1.06 0Z',
       ],
@@ -416,7 +428,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       ],
       lock: ['M4 7V5a4 4 0 0 1 8 0v2', 'M3 7h10v7H3z'],
       changes: ['M4 5h8', 'M8 2v6', 'M4 12h8'],
-      'changes-requested': ['M4 5h8', 'M8 2v6', 'M4 12h8'],
+      'changes-requested': ['M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16ZM4 7.25h8v1.5H4z'],
       comment: ['M2 2h12v9H7l-4 3v-3H2z'],
       commented: ['M2 2h12v9H7l-4 3v-3H2z'],
       'approve-review': ['M3 8l3 3 7-7'],

@@ -1,6 +1,6 @@
 # GitHub Quick Approve
 
-Adds a compact amber review button beside **Submit review** in GitHub’s new PR interface. Click once to approve immediately. The button shows when you have already approved, the PR is merged or closed, or approval is unavailable.
+Adds a compact amber checkmark button beside **Submit review** in GitHub’s new PR interface. Click once to approve immediately. The button shows when you have already approved, the PR is merged or closed, or approval is unavailable.
 
 ## Build & install
 
@@ -25,7 +25,7 @@ A compatible classic token also works; private repositories require the broader 
 
 ## Approval & recovery
 
-By default, a pending draft review shows a disabled lock; finish it in GitHub. In settings, **Pending review** lets you choose **Request changes** (red plus/minus), **Comment** (blue speech bubble), or **Approve** (green review check) instead. One click submits your existing pending review and publishes its saved comments. Text you have not saved in GitHub’s editor is not included. The preference stays in this Chrome profile and applies to your pending review, rather than other people’s unresolved conversation threads. Changing the setting does not submit a review.
+By default, a pending draft review shows a disabled lock; finish it in GitHub. In settings, **Pending review** lets you choose **Request changes** (red plus/minus), **Comment** (blue speech bubble), or **Approve** (amber checkmark) instead. One click submits your existing pending review and publishes its saved comments. Text you have not saved in GitHub’s editor is not included. Available approval actions use an amber checkmark; a completed approval uses a solid green circle-check without button styling. After a confirmed pending-review submission, the extension refreshes the current PR so GitHub clears its native pending-comment count and updates its review controls (preserving scroll position). Unknown outcomes stay on the page for recovery. The preference stays in this Chrome profile and applies to your pending review, rather than other people’s unresolved conversation threads. Changing the setting does not submit a review.
 
 A changed commit requires reviewing the new changes and clicking again. Already approved, own, merged, and closed PRs show distinct inactive states. Hover or focus the button for the explanation.
 
