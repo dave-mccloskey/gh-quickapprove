@@ -419,7 +419,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       'changes-requested': ['M4 5h8', 'M8 2v6', 'M4 12h8'],
       comment: ['M2 2h12v9H7l-4 3v-3H2z'],
       commented: ['M2 2h12v9H7l-4 3v-3H2z'],
-      'approve-review': ['M2 2h12v9H7l-4 3v-3H2z', 'm5 6 2 2 4-4'],
+      'approve-review': ['M3 8l3 3 7-7'],
       key: ['M8.5 5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0', 'M8 7.5l6.5 6.5m-2-2 2-2m-4 0 2-2'],
       spinner: ['M14 8a6 6 0 1 1-4-5.66'],
       alert: ['M8 1.5 15 14H1z', 'M8 6v3.5', 'M8 12v.1'],
