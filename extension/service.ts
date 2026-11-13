@@ -36,7 +36,10 @@ export function createService({
           preferenceRevision++;
           preferenceWrites++;
           try {
-            await storage.set('pendingReviewAction', message.action);
+            if (message.action !== undefined)
+              await storage.set('pendingReviewAction', message.action);
+            if (message.shortcutEnabled !== undefined)
+              await storage.set('shortcutEnabled', message.shortcutEnabled);
           } finally {
             preferenceWrites--;
             preferenceRevision++;
@@ -47,6 +50,7 @@ export function createService({
           kind: 'preferences',
           label: 'Review preference saved',
           action: pendingReviewAction(await storage.get('pendingReviewAction')),
+          shortcutEnabled: (await storage.get('shortcutEnabled')) === true,
         };
       }
       return manageCredential(message);
@@ -89,7 +93,10 @@ export function createService({
     });
     operations.set(target.key, operation);
     try {
-      return await operation;
+      return {
+        ...(await operation),
+        shortcutEnabled: (await storage.get('shortcutEnabled').catch(() => false)) === true,
+      };
     } finally {
       queued.set(target.key, Math.max(0, (queued.get(target.key) ?? 1) - 1));
       if (queued.get(target.key) === 0) queued.delete(target.key);
@@ -426,13 +433,16 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
       message.op === 'setToken'
         ? ['op', 'token', 'traceId']
         : message.op === 'setPreferences'
-          ? ['op', 'action', 'traceId']
+          ? ['op', 'action', 'shortcutEnabled', 'traceId']
           : ['op', 'traceId'];
     if (
       Object.keys(message).some((key) => !allowed.includes(key)) ||
       (message.op === 'setToken' && typeof message.token !== 'string') ||
       (message.op === 'setPreferences' &&
-        !['lock', 'changes', 'comment', 'approve'].includes(message.action ?? ''))
+        ((message.action === undefined && message.shortcutEnabled === undefined) ||
+          (message.action !== undefined &&
+            !['lock', 'changes', 'comment', 'approve'].includes(message.action)) ||
+          (message.shortcutEnabled !== undefined && typeof message.shortcutEnabled !== 'boolean')))
     )
       throw new Error('Malformed request');
     return null;

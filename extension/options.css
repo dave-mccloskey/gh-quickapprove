@@ -352,3 +352,37 @@ footer {
   cursor: wait;
   opacity: 0.7;
 }
+
+.shortcut-preferences {
+  margin-top: 28px;
+}
+.shortcut-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 14px 0 0;
+  font-size: 13px;
+}
+.shortcut-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0 4px 0 0;
+  padding: 0;
+  flex: none;
+  accent-color: var(--link);
+}
+.shortcut-toggle input:focus {
+  outline-offset: 3px;
+}
+.shortcut-toggle kbd {
+  font: inherit;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--background);
+}
+#shortcut-status {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 0;
+}

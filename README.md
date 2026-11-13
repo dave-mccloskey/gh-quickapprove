@@ -23,6 +23,12 @@ Settings show the connected account after validation. Return to the PR and click
 
 A compatible classic token also works; private repositories require the broader `repo` scope. A fine-grained token limits the grant to the selected owner and permissions.
 
+## Keyboard shortcut
+
+The shortcut is off by default. In settings, enable **Shift+L shortcut** to run the current header-button action on a supported PR page. It uses the same review preference and safety checks as a click. The tooltip shows the shortcut when enabled.
+
+Shift+L is ignored while typing in inputs, comment editors, and other editable fields, and when the header button is unavailable. Holding the key does not repeat the action. Turning the option off updates open PR tabs.
+
 ## Approval & recovery
 
 By default, a pending draft review shows a disabled lock; finish it in GitHub. In settings, **Pending review** lets you choose **Request changes** (red plus/minus), **Comment** (blue speech bubble), or **Approve** (amber checkmark) instead. One click submits your existing pending review and publishes its saved comments. Text you have not saved in GitHub’s editor is not included. Available approval actions use an amber checkmark; a completed approval uses a solid green circle-check without button styling. After a confirmed pending-review submission, the extension refreshes the current PR so GitHub clears its native pending-comment count and updates its review controls (preserving scroll position). Unknown outcomes stay on the page for recovery. The preference stays in this Chrome profile and applies to your pending review, rather than other people’s unresolved conversation threads. Changing the setting does not submit a review.

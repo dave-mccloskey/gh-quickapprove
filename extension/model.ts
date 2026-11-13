@@ -32,6 +32,7 @@ export type PendingReviewAction = 'lock' | 'changes' | 'comment' | 'approve';
 export type ReviewAction = Exclude<PendingReviewAction, 'lock'>;
 
 export interface ViewState {
+  shortcutEnabled?: boolean;
   kind: string;
   label: string;
   sha?: string;
@@ -59,6 +60,7 @@ export interface Attempt {
 }
 
 export interface ExtensionMessage {
+  shortcutEnabled?: boolean;
   op: string;
   pageUser?: string;
   generation?: number;

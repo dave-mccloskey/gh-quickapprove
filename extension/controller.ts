@@ -1,4 +1,5 @@
 interface ControllerView {
+  shortcutEnabled?: boolean;
   kind: string;
   label: string;
   sha?: string;

@@ -186,7 +186,11 @@ async function tracedStorage<T>(
   const spanId = crypto.randomUUID();
   const start = performance.now();
   const area =
-    key === 'credential' ? 'credential' : key === 'pendingReviewAction' ? 'preferences' : 'attempt';
+    key === 'credential'
+      ? 'credential'
+      : ['pendingReviewAction', 'shortcutEnabled'].includes(key)
+        ? 'preferences'
+        : 'attempt';
   diagnostics.record('storage.begin', {spanId, area, operation});
   try {
     const value = await action();

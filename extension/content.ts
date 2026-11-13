@@ -83,6 +83,44 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     document.addEventListener('keydown', (event) => {
       if (event.key === 'Escape') hideTooltip();
     });
+    document.addEventListener(
+      'keydown',
+      (event) => {
+        if (
+          !event.isTrusted ||
+          event.defaultPrevented ||
+          event.isComposing ||
+          event.repeat ||
+          !event.shiftKey ||
+          event.ctrlKey ||
+          event.altKey ||
+          event.metaKey ||
+          event.key.toLowerCase() !== 'l' ||
+          controller.view.shortcutEnabled !== true ||
+          !root.isConnected ||
+          !button.getClientRects().length ||
+          button.getAttribute('aria-disabled') === 'true'
+        )
+          return;
+        if (
+          event
+            .composedPath()
+            .some(
+              (target) =>
+                target instanceof HTMLElement &&
+                (target.isContentEditable ||
+                  target.matches(
+                    'input, textarea, select, [role="textbox"], [role="searchbox"], [role="combobox"]',
+                  )),
+            )
+        )
+          return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void activate();
+      },
+      true,
+    );
     window.addEventListener('focus', () => {
       recordDiagnostic('ui.visibility', {visible: !document.hidden});
       if (controller.phase !== 'approving') void refresh('state', false, 'focus');
@@ -352,6 +390,9 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     button.dataset.state = kind;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-disabled', String(disabled));
+    if (controller.view.shortcutEnabled === true && !disabled)
+      button.setAttribute('aria-keyshortcuts', 'Shift+L');
+    else button.removeAttribute('aria-keyshortcuts');
     button.setAttribute('aria-busy', String(['loading', 'busy'].includes(kind)));
     const iconName =
       kind === 'available' && controller.view.reviewId
@@ -371,7 +412,9 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       button.dataset.icon = iconName;
       button.replaceChildren(makeIcon(iconName));
     }
-    if (tooltip.textContent !== label) tooltip.textContent = label;
+    const tooltipLabel =
+      controller.view.shortcutEnabled === true && !disabled ? `${label} (Shift+L)` : label;
+    if (tooltip.textContent !== tooltipLabel) tooltip.textContent = tooltipLabel;
     if (tooltip.matches(':popover-open')) positionTooltip();
   }
 

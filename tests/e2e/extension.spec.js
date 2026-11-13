@@ -1656,3 +1656,130 @@ test('a confirmed pending submission from the previous PR cannot reload the curr
   await expect(page).toHaveURL('https://github.com/example/widget/pull/24');
   expect(server.posts).toHaveLength(1);
 });
+
+test('Shift+L is disabled by default and the opt-in persists across settings reloads', async () => {
+  const settings = await connect();
+  const toggle = settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'});
+  await expect(toggle).not.toBeChecked();
+  const page = await prPage();
+  const button = page.getByRole('button', {name: 'Quick approve', exact: true});
+  await expect(button).toBeVisible();
+  await page.keyboard.press('Shift+L');
+  await expect(button).toHaveAttribute('data-state', 'available');
+  expect(server.posts).toHaveLength(0);
+  await toggle.check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  await expect(button).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await settings.reload();
+  await expect(toggle).toBeChecked();
+  await toggle.uncheck();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut disabled.');
+  await expect(button).not.toHaveAttribute('aria-keyshortcuts');
+  await page.keyboard.press('Shift+L');
+  await expect(button).toHaveAttribute('data-state', 'available');
+  expect(server.posts).toHaveLength(0);
+});
+
+for (const [choice, event] of [
+  [null, 'APPROVE'],
+  ['Request changes', 'REQUEST_CHANGES'],
+  ['Comment', 'COMMENT'],
+  ['Approve', 'APPROVE'],
+]) {
+  test(`Shift+L activates the ${choice ?? 'ordinary approval'} button action once`, async () => {
+    const settings = await connect();
+    if (choice) {
+      server.reviews = [
+        {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+      ];
+      await settings.getByRole('radio', {name: new RegExp('^' + choice)}).check();
+      await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    }
+    await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+    await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+    const page = await prPage();
+    await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+    await page.keyboard.press('Shift+L');
+    await expect.poll(() => server.posts.length).toBe(1);
+    if (choice) expect(server.posts[0]).toEqual({reviewId: 'PRR_pending', event});
+    else expect(server.posts[0]).toEqual({pullRequestId: 'PR_99', commitOid: sha});
+  });
+}
+
+test('Shift+L ignores editors, synthetic events, extra modifiers, and a locked review', async () => {
+  const settings = await connect();
+  await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  const page = await prPage();
+  await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await page.evaluate(() => {
+    const editors = document.createElement('div');
+    editors.innerHTML =
+      '<input id="shortcut-input"><textarea id="shortcut-comment"></textarea><select id="shortcut-select"><option>Value</option></select><div id="shortcut-editable" contenteditable="true">Review draft</div><div id="shortcut-textbox" role="textbox" tabindex="0">Custom editor</div>';
+    document.querySelector('main').append(editors);
+  });
+  for (const id of [
+    'shortcut-input',
+    'shortcut-comment',
+    'shortcut-select',
+    'shortcut-editable',
+    'shortcut-textbox',
+  ]) {
+    await page.locator('#' + id).focus();
+    await page.keyboard.press('Shift+L');
+  }
+  await page.getByRole('heading', {name: 'Improve search results', exact: true}).click();
+  await page.keyboard.press('Control+Shift+L');
+  await page.keyboard.press('Alt+Shift+L');
+  await page.evaluate(() =>
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'L', shiftKey: true, bubbles: true})),
+  );
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toHaveAttribute(
+    'data-state',
+    'available',
+  );
+  expect(server.posts).toHaveLength(0);
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await page.reload();
+  await expect(
+    page.getByRole('button', {name: 'Finish your pending review in GitHub', exact: true}),
+  ).toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Shift+L');
+  expect(server.posts).toHaveLength(0);
+});
+
+test('holding Shift+L cannot submit again after the pending review refreshes', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  await settings.getByRole('checkbox', {name: 'Enable Shift+L shortcut'}).check();
+  await expect(settings.locator('#shortcut-status')).toHaveText('Shortcut enabled.');
+  const page = await prPage();
+  await expect(page.locator('.qa-button')).toHaveAttribute('aria-keyshortcuts', 'Shift+L');
+  await page.keyboard.down('Shift');
+  try {
+    await page.keyboard.down('l');
+    await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+    await page.evaluate(() => {
+      window.addEventListener(
+        'keydown',
+        (event) => {
+          window.shortcutRepeatObserved = event.repeat;
+        },
+        {once: true},
+      );
+    });
+    await page.keyboard.down('l');
+    expect(await page.evaluate(() => window.shortcutRepeatObserved)).toBe(true);
+    await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+    expect(server.posts).toHaveLength(1);
+  } finally {
+    await page.keyboard.up('l');
+    await page.keyboard.up('Shift');
+  }
+});

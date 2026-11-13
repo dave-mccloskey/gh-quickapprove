@@ -30,6 +30,11 @@ window.addEventListener('pagehide', () => {
 void loadStatus();
 const reviewPreferences = requiredElement('review-preferences', HTMLFieldSetElement);
 const reviewPreferenceStatus = requiredElement('review-preference-status', HTMLElement);
+const shortcutToggle = requiredElement('shortcut-enabled', HTMLInputElement);
+const shortcutStatus = requiredElement('shortcut-status', HTMLElement);
+shortcutToggle.addEventListener('change', () => {
+  void saveShortcutPreference();
+});
 reviewPreferences.addEventListener('change', (event) => {
   if (event.target instanceof HTMLInputElement) void manageReviewPreference(event.target.value);
 });
@@ -46,6 +51,12 @@ async function manageReviewPreference(value?: string) {
       value ? {op: 'setPreferences', action: pendingReviewAction(value)} : {op: 'getPreferences'},
     );
     if (result.kind !== 'preferences') throw new Error('Preference request failed');
+    if (value === undefined) {
+      shortcutToggle.checked = result.shortcutEnabled === true;
+      shortcutStatus.textContent = shortcutToggle.checked
+        ? 'Shortcut enabled.'
+        : 'Shortcut disabled.';
+    }
     for (const choice of reviewPreferences.querySelectorAll<HTMLInputElement>(
       'input[type="radio"]',
     ))
@@ -54,16 +65,41 @@ async function manageReviewPreference(value?: string) {
       ? 'Preference saved.'
       : 'Changes save automatically.';
   } catch {
+    if (value === undefined)
+      shortcutStatus.textContent =
+        'Could not load the shortcut preference. Reload settings to try again.';
     reviewPreferenceStatus.textContent = value
       ? 'Could not confirm the preference was saved. Reload settings to check it.'
       : 'Could not load the review preference. Reload settings to try again.';
   } finally {
+    if (value === undefined) shortcutToggle.disabled = false;
     reviewPreferences.disabled = false;
     if (focusedChoice instanceof HTMLInputElement && document.activeElement === document.body) {
       reviewPreferences
         .querySelector<HTMLInputElement>('input:checked')
         ?.focus({preventScroll: true});
     }
+  }
+}
+
+async function saveShortcutPreference() {
+  const restoreFocus = document.activeElement === shortcutToggle;
+  shortcutToggle.disabled = true;
+  shortcutStatus.textContent = 'Saving shortcut preference…';
+  try {
+    const result = await send({op: 'setPreferences', shortcutEnabled: shortcutToggle.checked});
+    if (result.kind !== 'preferences') throw new Error('Preference request failed');
+    shortcutToggle.checked = result.shortcutEnabled === true;
+    shortcutStatus.textContent = shortcutToggle.checked
+      ? 'Shortcut enabled.'
+      : 'Shortcut disabled.';
+  } catch {
+    shortcutStatus.textContent =
+      'Could not confirm the shortcut preference was saved. Reload settings to check it.';
+  } finally {
+    shortcutToggle.disabled = false;
+    if (restoreFocus && document.activeElement === document.body)
+      shortcutToggle.focus({preventScroll: true});
   }
 }
 

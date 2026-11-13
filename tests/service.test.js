@@ -603,3 +603,40 @@ for (const changed of ['preference', 'head']) {
     assert.equal(h.values.has('attempt:7:99'), false);
   });
 }
+
+test('keyboard shortcut preference is opt-in, private, and independent of review action', async () => {
+  const h = harness();
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).shortcutEnabled, false);
+  await assert.rejects(h.service.handle({op: 'setPreferences', shortcutEnabled: true}, h.sender));
+  await assert.rejects(
+    h.service.handle({op: 'setPreferences', shortcutEnabled: 'true'}, h.options),
+  );
+  await assert.rejects(h.service.handle({op: 'setPreferences'}, h.options));
+  await h.service.handle({op: 'setPreferences', action: 'changes'}, h.options);
+  await h.service.handle({op: 'setPreferences', shortcutEnabled: true}, h.options);
+  const enabled = await h.service.handle({op: 'getPreferences'}, h.options);
+  assert.equal(enabled.shortcutEnabled, true);
+  assert.equal(enabled.action, 'changes');
+  await h.save();
+  assert.equal((await h.state()).shortcutEnabled, true);
+  await h.service.handle({op: 'setPreferences', action: 'comment'}, h.options);
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).shortcutEnabled, true);
+  await h.service.handle({op: 'setPreferences', shortcutEnabled: false}, h.options);
+  assert.equal((await h.state()).shortcutEnabled, false);
+  h.values.set('shortcutEnabled', 'true');
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).shortcutEnabled, false);
+});
+
+test('unreadable optional shortcut preference cannot change a confirmed review result', async () => {
+  const h = harness();
+  await h.save();
+  const get = h.storage.get;
+  h.storage.get = async (key) => {
+    if (key === 'shortcutEnabled') throw new Error('Preference storage unavailable');
+    return get(key);
+  };
+  const result = await h.approve();
+  assert.equal(result.kind, 'approved');
+  assert.equal(result.shortcutEnabled, false);
+  assert.equal(h.writes.length, 1);
+});
