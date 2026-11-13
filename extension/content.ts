@@ -240,7 +240,13 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
           op,
           generation: token.epoch,
           pageUser: operation.context.pageUser,
-          ...(approval ? {sha: operation.sha} : {}),
+          ...(approval
+            ? {
+                sha: operation.sha,
+                ...(operation.action ? {action: operation.action} : {}),
+                ...(operation.reviewId ? {reviewId: operation.reviewId} : {}),
+              }
+            : {}),
         },
         traceId,
       );
@@ -249,7 +255,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       view = approval
         ? {
             kind: 'uncertain',
-            label: 'Approval result unknown. Reload the page to check its review history',
+            label: 'Review result unknown. Reload the page to check its review history',
             sha: operation.sha,
           }
         : {kind: 'error', label: 'Quick Approve disconnected. Reload this page to reconnect'};
@@ -312,11 +318,18 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
       stateSince = performance.now();
       stallWatchdog.start();
     }
-    const label = controller.phase === 'approving' ? 'Approving…' : controller.view.label;
+    const label =
+      controller.phase === 'approving'
+        ? controller.reviewId
+          ? 'Submitting review…'
+          : 'Approving…'
+        : controller.view.label;
     const disabled = [
       'loading',
       'busy',
       'approved',
+      'changes-requested',
+      'commented',
       'merged',
       'closed',
       'own',
@@ -327,15 +340,20 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     button.setAttribute('aria-label', label);
     button.setAttribute('aria-disabled', String(disabled));
     button.setAttribute('aria-busy', String(['loading', 'busy'].includes(kind)));
-    const iconName = ['setup', 'invalid'].includes(kind)
-      ? 'key'
-      : ['loading', 'busy'].includes(kind)
-        ? 'spinner'
-        : ['own', 'pending', 'account', 'access'].includes(kind)
-          ? 'lock'
-          : ['error', 'uncertain', 'changed', 'canceled'].includes(kind)
-            ? 'alert'
-            : kind;
+    const iconName =
+      kind === 'available' && controller.view.reviewId
+        ? controller.view.action === 'approve'
+          ? 'approve-review'
+          : (controller.view.action ?? 'available')
+        : ['setup', 'invalid'].includes(kind)
+          ? 'key'
+          : ['loading', 'busy'].includes(kind)
+            ? 'spinner'
+            : ['own', 'pending', 'account', 'access'].includes(kind)
+              ? 'lock'
+              : ['error', 'uncertain', 'changed', 'canceled'].includes(kind)
+                ? 'alert'
+                : kind;
     if (button.dataset.icon !== iconName) {
       button.dataset.icon = iconName;
       button.replaceChildren(makeIcon(iconName));
@@ -397,6 +415,11 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
         'M10 5l4 6m0-6-4 6',
       ],
       lock: ['M4 7V5a4 4 0 0 1 8 0v2', 'M3 7h10v7H3z'],
+      changes: ['M2 1h12v14H2z', 'M5 5h6', 'M8 2v6', 'M5 11h6'],
+      'changes-requested': ['M2 1h12v14H2z', 'M5 5h6', 'M8 2v6', 'M5 11h6'],
+      comment: ['M2 2h12v9H7l-4 3v-3H2z'],
+      commented: ['M2 2h12v9H7l-4 3v-3H2z'],
+      'approve-review': ['M2 2h12v9H7l-4 3v-3H2z', 'm5 6 2 2 4-4'],
       key: ['M8.5 5a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0', 'M8 7.5l6.5 6.5m-2-2 2-2m-4 0 2-2'],
       spinner: ['M14 8a6 6 0 1 1-4-5.66'],
       alert: ['M8 1.5 15 14H1z', 'M8 6v3.5', 'M8 12v.1'],
@@ -424,7 +447,7 @@ declare const quickApproveTiming: typeof import('./timing.js').timing;
     if (controller.view.kind === 'uncertain') {
       const warning = document.createElement('p');
       warning.textContent =
-        'Allowing another attempt may create a duplicate approval. Check GitHub first.';
+        'Allowing another attempt may create a duplicate review. Check GitHub first.';
       panel.append(warning);
       const history = document.createElement('a');
       history.href = `https://github.com${prRoute()}`;

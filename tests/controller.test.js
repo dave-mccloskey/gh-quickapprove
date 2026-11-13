@@ -101,3 +101,17 @@ test('account changes invalidate the view and only an available view with SHA pe
   });
   assert.equal(step(noSha, {type: 'approve'}), noSha);
 });
+
+test('pending submission snapshots action and review ID while duplicate activation stays suppressed', () => {
+  const read = reading();
+  const current = step(read, {
+    type: 'complete',
+    token: read.operation,
+    view: {...available, action: 'changes', reviewId: 'PRR_pending'},
+  });
+  const write = step(current, {type: 'approve'});
+  assert.equal(write.phase, 'approving');
+  assert.equal(write.action, 'changes');
+  assert.equal(write.reviewId, 'PRR_pending');
+  assert.equal(step(write, {type: 'approve'}), write);
+});

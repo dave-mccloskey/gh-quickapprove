@@ -474,3 +474,132 @@ test('recovery stays blocked if the PR head changed or no new own approval exist
     assert.ok(h.values.has('attempt:7:99'));
   }
 });
+
+// Catches unsafe preference access and unsafe fallback for corrupted persisted settings.
+test('pending review preferences are private to options and default to lock', async () => {
+  const h = harness();
+  await assert.rejects(h.service.handle({op: 'setPreferences', action: 'approve'}, h.sender));
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).action, 'lock');
+  await assert.rejects(h.service.handle({op: 'setPreferences', action: 'invalid'}, h.options));
+  await h.service.handle({op: 'setPreferences', action: 'changes'}, h.options);
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).action, 'changes');
+  h.values.set('pendingReviewAction', 'invalid');
+  assert.equal((await h.service.handle({op: 'getPreferences'}, h.options)).action, 'lock');
+});
+
+for (const [action, finalState] of [
+  ['changes', 'CHANGES_REQUESTED'],
+  ['comment', 'COMMENTED'],
+  ['approve', 'APPROVED'],
+]) {
+  test(`pending ${action} submits the displayed review exactly once`, async () => {
+    const submissions = [];
+    const h = harness({
+      api: {
+        submitReview: async (...args) => {
+          submissions.push(args);
+          h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: finalState}]);
+          return {id: 12, state: finalState};
+        },
+      },
+    });
+    await h.save();
+    h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: 'PENDING'}]);
+    await h.service.handle({op: 'setPreferences', action}, h.options);
+    const message = {op: 'approve', ...h.message, sha: h.pr.head.sha, action, reviewId: 'PRR_12'};
+    assert.equal((await h.state()).action, action);
+    await Promise.all([h.service.handle(message, h.sender), h.service.handle(message, h.sender)]);
+    assert.equal(submissions.length, 1);
+    assert.deepEqual(submissions[0].slice(0, 3), ['PRR_12', action, 'valid']);
+    assert.equal(h.writes.length, 0);
+  });
+}
+
+test('stale pending action or review ID never submits a replacement', async () => {
+  let count = 0;
+  const h = harness({
+    api: {
+      submitReview: async () => {
+        count++;
+        return {id: 12, state: 'APPROVED'};
+      },
+    },
+  });
+  await h.save();
+  h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: 'PENDING'}]);
+  await h.service.handle({op: 'setPreferences', action: 'approve'}, h.options);
+  for (const overrides of [
+    {action: 'changes', reviewId: 'PRR_12'},
+    {action: 'approve', reviewId: 'PRR_old'},
+    {},
+  ]) {
+    await h.service.handle(
+      {op: 'approve', ...h.message, sha: h.pr.head.sha, ...overrides},
+      h.sender,
+    );
+  }
+  assert.equal(count, 0);
+  assert.equal(h.writes.length, 0);
+});
+
+test('lost pending submission reconciles the same review ID and never resubmits', async () => {
+  let count = 0;
+  const h = harness({
+    api: {
+      submitReview: async () => {
+        count++;
+        throw new Error('lost reply');
+      },
+    },
+  });
+  await h.save();
+  h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: 'PENDING'}]);
+  await h.service.handle({op: 'setPreferences', action: 'comment'}, h.options);
+  const message = {
+    op: 'approve',
+    ...h.message,
+    sha: h.pr.head.sha,
+    action: 'comment',
+    reviewId: 'PRR_12',
+  };
+  assert.equal((await h.service.handle(message, h.sender)).kind, 'uncertain');
+  const restarted = createService(h.dependencies);
+  assert.equal((await restarted.handle(message, h.sender)).kind, 'uncertain');
+  assert.equal(count, 1);
+  h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: 'COMMENTED'}]);
+  assert.equal((await restarted.handle({op: 'state', ...h.message}, h.sender)).kind, 'available');
+  assert.equal(h.values.has('attempt:7:99'), false);
+});
+
+for (const changed of ['preference', 'head']) {
+  test(`pending submission cancels when ${changed} changes at the final context check`, async () => {
+    let confirmations = 0;
+    let submissions = 0;
+    const h = harness({
+      verifyContext: async () => {
+        if (++confirmations === 2) {
+          if (changed === 'preference')
+            await h.service.handle({op: 'setPreferences', action: 'lock'}, h.options);
+          else h.pr.head.sha = 'b'.repeat(40);
+        }
+        return true;
+      },
+      api: {
+        submitReview: async () => {
+          submissions++;
+          return {id: 12, state: 'APPROVED'};
+        },
+      },
+    });
+    await h.save();
+    h.setReviews([{id: 12, nodeId: 'PRR_12', user: h.user, state: 'PENDING'}]);
+    await h.service.handle({op: 'setPreferences', action: 'approve'}, h.options);
+    const result = await h.service.handle(
+      {op: 'approve', ...h.message, sha: 'a'.repeat(40), action: 'approve', reviewId: 'PRR_12'},
+      h.sender,
+    );
+    assert.ok(['canceled', 'changed'].includes(result.kind));
+    assert.equal(submissions, 0);
+    assert.equal(h.values.has('attempt:7:99'), false);
+  });
+}

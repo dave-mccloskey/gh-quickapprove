@@ -2,6 +2,8 @@ interface ControllerView {
   kind: string;
   label: string;
   sha?: string;
+  action?: 'lock' | 'changes' | 'comment' | 'approve';
+  reviewId?: string;
 }
 
 interface ControllerContext {
@@ -38,6 +40,8 @@ type ControllerState = ControllerBase &
         context: ControllerContext;
         operation: ControllerToken;
         sha: string;
+        action?: 'changes' | 'comment' | 'approve';
+        reviewId?: string;
         deferredRefresh: boolean;
       }
   );
@@ -115,7 +119,8 @@ function transitionController(state: ControllerState, event: ControllerEvent): C
       if (
         (state.phase !== 'idle' && state.phase !== 'reading') ||
         state.view.kind !== 'available' ||
-        !state.view.sha
+        !state.view.sha ||
+        state.view.action === 'lock'
       )
         return state;
       const sequence = state.sequence + 1;
@@ -128,6 +133,8 @@ function transitionController(state: ControllerState, event: ControllerEvent): C
         context: state.context,
         operation: {epoch: state.epoch, number: sequence, started: event.now},
         sha: state.view.sha,
+        ...(state.view.action ? {action: state.view.action} : {}),
+        ...(state.view.reviewId ? {reviewId: state.view.reviewId} : {}),
         deferredRefresh: false,
       };
     }

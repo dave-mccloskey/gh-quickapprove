@@ -1,4 +1,22 @@
-import type {GitHubUser, PrTarget, PullRequest, Review, ViewState} from './model.js';
+import type {
+  GitHubUser,
+  PrTarget,
+  PullRequest,
+  Review,
+  ViewState,
+  PendingReviewAction,
+  ReviewAction,
+} from './model.js';
+
+export function pendingReviewAction(value: unknown): PendingReviewAction {
+  return value === 'changes' || value === 'comment' || value === 'approve' ? value : 'lock';
+}
+
+export const reviewStates: Record<ReviewAction, string> = {
+  changes: 'CHANGES_REQUESTED',
+  comment: 'COMMENTED',
+  approve: 'APPROVED',
+};
 
 /** Parses a supported PR URL without accepting caller-controlled path segments. */
 export function parsePrUrl(value: string): PrTarget | null {
@@ -26,12 +44,14 @@ export function reduceState({
   reviews,
   pageUser,
   pendingAttempt,
+  pendingReviewAction: preference,
 }: {
   pr: PullRequest;
   user: GitHubUser;
   reviews: Review[];
   pageUser?: string;
   pendingAttempt?: boolean;
+  pendingReviewAction?: unknown;
 }): ViewState {
   const base = {sha: pr.head.sha};
   const result = (kind: string, label: string) => ({...base, kind, label});
@@ -45,10 +65,27 @@ export function reduceState({
   }
   if (pr.user.id === user.id) return result('own', "You can't approve your own PR");
   if (pendingAttempt)
-    return result('uncertain', 'Approval result unknown. Check the review history before retrying');
+    return result('uncertain', 'Review result unknown. Check the review history before retrying');
   const own = reviews.filter((review) => review.user?.id === user.id);
-  if (own.some((review) => review.state === 'PENDING'))
+  const pending = own.filter((review) => review.state === 'PENDING');
+  if (pending.length) {
+    const action = pendingReviewAction(preference);
+    if (action !== 'lock' && pending.length === 1 && pending[0].nodeId) {
+      const labels = {
+        changes: 'Request changes and submit pending comments',
+        comment: 'Submit pending comments as a review',
+        approve: 'Approve and submit pending comments',
+      };
+      return {
+        ...base,
+        kind: 'available',
+        label: labels[action],
+        action,
+        reviewId: pending[0].nodeId,
+      };
+    }
     return result('pending', 'Finish your pending review in GitHub');
+  }
   const decisive = own
     .filter((review) => ['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state))
     .at(-1);

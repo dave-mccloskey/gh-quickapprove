@@ -80,6 +80,19 @@ async function launchContext({viewport = {width: 1440, height: 900}, deviceScale
       return route.fulfill({status: 401, json: {message: 'Bad credentials'}});
     if (operation === 'QuickApproveUser')
       return route.fulfill({json: {data: {viewer: server.user}}});
+    if (operation === 'QuickApproveSubmitReview') {
+      const review = server.reviews.find((item) => item.id === payload.variables.reviewId);
+      expect(review?.state).toBe('PENDING');
+      server.posts.push(payload.variables);
+      review.state = {
+        REQUEST_CHANGES: 'CHANGES_REQUESTED',
+        COMMENT: 'COMMENTED',
+        APPROVE: 'APPROVED',
+      }[payload.variables.event];
+      if (server.losePostResponse) return route.abort('failed');
+      if (server.postGate) await server.postGate;
+      return route.fulfill({json: {data: {submitPullRequestReview: {pullRequestReview: review}}}});
+    }
     if (operation === 'QuickApproveApprove') {
       server.posts.push(payload.variables);
       const review = {
@@ -1308,3 +1321,203 @@ for (const op of ['state', 'approve']) {
     expect(server.posts).toHaveLength(op === 'approve' ? 1 : 0);
   });
 }
+
+for (const [choice, action, event, label, icon] of [
+  [
+    'Request changes',
+    'changes',
+    'REQUEST_CHANGES',
+    'Request changes and submit pending comments',
+    'changes',
+  ],
+  ['Comment', 'comment', 'COMMENT', 'Submit pending comments as a review', 'comment'],
+  ['Approve', 'approve', 'APPROVE', 'Approve and submit pending comments', 'approve-review'],
+]) {
+  test(`pending review setting ${action} persists and submits saved comments with one keyboard activation`, async () => {
+    const settings = await connect();
+    server.reviews = [
+      {
+        id: 'PRR_pending',
+        fullDatabaseId: '51',
+        author: server.user,
+        state: 'PENDING',
+        body: 'Saved summary',
+        comments: ['Please handle expiration', 'Add coverage'],
+      },
+    ];
+    const page = await prPage();
+    await expect(
+      page.getByRole('button', {name: 'Finish your pending review in GitHub', exact: true}),
+    ).toHaveAttribute('aria-disabled', 'true');
+    await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeChecked();
+    await settings.getByRole('radio', {name: new RegExp('^' + choice)}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const control = page.getByRole('button', {name: label, exact: true});
+    await expect(control).toHaveAttribute('data-icon', icon);
+    await expect(control).toHaveAttribute('aria-disabled', 'false');
+    await settings.reload();
+    await expect(settings.getByRole('radio', {name: new RegExp('^' + choice)})).toBeChecked();
+    await control.focus();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => server.posts.length).toBe(1);
+    expect(server.posts[0]).toEqual({reviewId: 'PRR_pending', event});
+    expect(server.reviews[0].body).toBe('Saved summary');
+    expect(server.reviews[0].comments).toEqual(['Please handle expiration', 'Add coverage']);
+    await page.reload();
+    const nextLabel = action === 'approve' ? 'You approved this PR' : 'Quick approve';
+    await expect(page.getByRole('button', {name: nextLabel, exact: true})).toBeVisible();
+    expect(server.posts).toHaveLength(1);
+  });
+}
+
+test('returning the pending action to lock updates open tabs without a submission', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Request changes/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  await expect(
+    page.getByRole('button', {name: 'Request changes and submit pending comments', exact: true}),
+  ).toBeVisible();
+  await settings.getByRole('radio', {name: /Keep locked/}).check();
+  const lock = page.getByRole('button', {
+    name: 'Finish your pending review in GitHub',
+    exact: true,
+  });
+  await expect(lock).toHaveAttribute('aria-disabled', 'true');
+  await lock.click({force: true});
+  expect(server.posts).toHaveLength(0);
+});
+
+test('a lost pending review reply recovers its submitted review without another write', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  server.losePostResponse = true;
+  await page
+    .getByRole('button', {name: 'Submit pending comments as a review', exact: true})
+    .click();
+  await expect.poll(() => server.posts.length).toBe(1);
+  await page.reload();
+  await expect(page.getByRole('button', {name: 'Quick approve', exact: true})).toBeVisible();
+  expect(server.posts).toHaveLength(1);
+});
+
+test('a lost preference-save reply restores controls and reload confirms the saved choice', async () => {
+  const settings = await options();
+  await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeEnabled();
+  await settings.evaluate(async () => {
+    const {timing} = await import(chrome.runtime.getURL('timing.js'));
+    timing.optionsRequestMs = 100;
+    const send = chrome.runtime.sendMessage.bind(chrome.runtime);
+    chrome.runtime.sendMessage = (...args) => {
+      const response = send(...args);
+      return args[0]?.op === 'setPreferences' ? new Promise(() => {}) : response;
+    };
+  });
+  await settings.getByRole('radio', {name: /^Request changes/}).check();
+  await expect(settings.locator('#review-preference-status')).toContainText('Could not confirm');
+  await expect(settings.getByRole('radio', {name: /Keep locked/})).toBeEnabled();
+  await settings.reload();
+  await expect(settings.getByRole('radio', {name: /^Request changes/})).toBeChecked();
+  expect(server.posts).toHaveLength(0);
+});
+
+test('pending review settings and colored header actions fit dark desktop and light mobile', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  await settings.emulateMedia({colorScheme: 'dark'});
+  const page = await prPage();
+  for (const [action, name, label] of [
+    ['changes', /^Request changes/, 'Request changes and submit pending comments'],
+    ['comment', /^Comment/, 'Submit pending comments as a review'],
+    ['approve', /^Approve/, 'Approve and submit pending comments'],
+  ]) {
+    await settings.getByRole('radio', {name}).check();
+    await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+    const control = page.getByRole('button', {name: label, exact: true});
+    await control.hover();
+    await expect(page.getByText(label, {exact: true})).toBeVisible();
+    await page.screenshot({path: `test-results/pending-${action}-header.png`});
+  }
+  await settings
+    .locator('.review-preferences')
+    .screenshot({path: 'test-results/pending-settings-dark.png'});
+  await settings.emulateMedia({colorScheme: 'light'});
+  await settings.setViewportSize({width: 390, height: 844});
+  await settings.locator('.review-preferences').scrollIntoViewIfNeeded();
+  await expect(settings.getByRole('radio', {name: /^Approve/})).toBeInViewport();
+  expect(await settings.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+    true,
+  );
+  await settings
+    .locator('.review-preferences')
+    .screenshot({path: 'test-results/pending-settings-mobile-light.png'});
+  expect(server.posts).toHaveLength(0);
+});
+
+test('settings radio choices retain focus between keyboard changes', async () => {
+  const settings = await options();
+  const locked = settings.getByRole('radio', {name: /Keep locked/});
+  await expect(locked).toBeEnabled();
+  await locked.focus();
+  await settings.keyboard.press('ArrowDown');
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  await expect(settings.getByRole('radio', {name: /^Request changes/})).toBeFocused();
+  await settings.keyboard.press('ArrowDown');
+  await expect(settings.getByRole('radio', {name: /^Comment/})).toBeChecked();
+});
+
+test('navigation while a pending preference read yields cancels the old review submission', async () => {
+  const settings = await connect();
+  server.reviews = [
+    {id: 'PRR_pending', fullDatabaseId: '51', author: server.user, state: 'PENDING'},
+  ];
+  server.prByNumber = {24: {...server.pr, id: 'PR_100', fullDatabaseId: '100'}};
+  await settings.getByRole('radio', {name: /^Comment/}).check();
+  await expect(settings.locator('#review-preference-status')).toHaveText('Preference saved.');
+  const page = await prPage();
+  const control = page.getByRole('button', {
+    name: 'Submit pending comments as a review',
+    exact: true,
+  });
+  await expect(control).toBeVisible();
+  const worker = context.serviceWorkers()[0];
+  await worker.evaluate(() => {
+    const get = chrome.storage.local.get.bind(chrome.storage.local);
+    let preferenceReads = 0;
+    chrome.storage.local.get = async (...args) => {
+      const value = await get(...args);
+      if (args[0] === 'pendingReviewAction' && ++preferenceReads === 3) {
+        self.pendingPreferenceBlocked = true;
+        await new Promise((resolve) => {
+          self.releasePendingPreference = resolve;
+        });
+      }
+      return value;
+    };
+  });
+  await control.click();
+  await expect.poll(() => worker.evaluate(() => self.pendingPreferenceBlocked)).toBe(true);
+  await page.goto('https://github.com/example/widget/pull/24');
+  await expect(
+    page.getByRole('button', {name: 'Submit pending comments as a review', exact: true}),
+  ).toBeVisible();
+  await worker.evaluate(() => self.releasePendingPreference());
+  await expect
+    .poll(() =>
+      settings.evaluate(
+        async () => (await chrome.storage.local.get('attempt:7:99'))['attempt:7:99'],
+      ),
+    )
+    .toBeUndefined();
+  expect(server.posts).toHaveLength(0);
+});

@@ -1,6 +1,7 @@
 import {timing} from './timing.js';
 import type {ExtensionMessage, ViewState} from './model.js';
 import {isRecord} from './diagnostics.js';
+import {pendingReviewAction} from './shared.js';
 
 const form = requiredElement('token-form', HTMLFormElement);
 const input = requiredElement('token', HTMLInputElement);
@@ -27,6 +28,45 @@ window.addEventListener('pagehide', () => {
   input.value = '';
 });
 void loadStatus();
+const reviewPreferences = requiredElement('review-preferences', HTMLFieldSetElement);
+const reviewPreferenceStatus = requiredElement('review-preference-status', HTMLElement);
+reviewPreferences.addEventListener('change', (event) => {
+  if (event.target instanceof HTMLInputElement) void manageReviewPreference(event.target.value);
+});
+void manageReviewPreference();
+
+async function manageReviewPreference(value?: string) {
+  const focusedChoice = reviewPreferences.contains(document.activeElement)
+    ? document.activeElement
+    : null;
+  reviewPreferences.disabled = true;
+  reviewPreferenceStatus.textContent = value ? 'Saving preference…' : 'Loading review preference…';
+  try {
+    const result = await send(
+      value ? {op: 'setPreferences', action: pendingReviewAction(value)} : {op: 'getPreferences'},
+    );
+    if (result.kind !== 'preferences') throw new Error('Preference request failed');
+    for (const choice of reviewPreferences.querySelectorAll<HTMLInputElement>(
+      'input[type="radio"]',
+    ))
+      choice.checked = choice.value === pendingReviewAction(result.action);
+    reviewPreferenceStatus.textContent = value
+      ? 'Preference saved.'
+      : 'Changes save automatically.';
+  } catch {
+    reviewPreferenceStatus.textContent = value
+      ? 'Could not confirm the preference was saved. Reload settings to check it.'
+      : 'Could not load the review preference. Reload settings to try again.';
+  } finally {
+    reviewPreferences.disabled = false;
+    if (focusedChoice instanceof HTMLInputElement && document.activeElement === document.body) {
+      reviewPreferences
+        .querySelector<HTMLInputElement>('input:checked')
+        ?.focus({preventScroll: true});
+    }
+  }
+}
+
 const diagnosticToggle = requiredElement('diagnostics-enabled', HTMLInputElement);
 const diagnosticExport = requiredElement('diagnostics-export', HTMLButtonElement);
 const diagnosticClear = requiredElement('diagnostics-clear', HTMLButtonElement);

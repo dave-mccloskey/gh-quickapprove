@@ -6,8 +6,9 @@ import type {
   PrTarget,
   ServiceDependencies,
   ViewState,
+  ReviewAction,
 } from './model.js';
-import {parsePrUrl, reduceState} from './shared.js';
+import {parsePrUrl, reduceState, pendingReviewAction, reviewStates} from './shared.js';
 import {emitDiagnostic} from './diagnostics.js';
 
 /** Owns credentials and serializes approvals across content-script requests. */
@@ -23,11 +24,33 @@ export function createService({
   const operations = new Map<string, Promise<ViewState>>();
   const queued = new Map<string, number>();
   let credentialRevision = 0;
+  let preferenceRevision = 0;
+  let preferenceWrites = 0;
   let credentialQueue = Promise.resolve();
 
   async function handle(message: ExtensionMessage, sender: MessageSender): Promise<ViewState> {
     const target = authorize(message, sender, extensionId);
-    if (!target) return manageCredential(message);
+    if (!target) {
+      if (message.op === 'getPreferences' || message.op === 'setPreferences') {
+        if (message.op === 'setPreferences') {
+          preferenceRevision++;
+          preferenceWrites++;
+          try {
+            await storage.set('pendingReviewAction', message.action);
+          } finally {
+            preferenceWrites--;
+            preferenceRevision++;
+          }
+          await notify();
+        }
+        return {
+          kind: 'preferences',
+          label: 'Review preference saved',
+          action: pendingReviewAction(await storage.get('pendingReviewAction')),
+        };
+      }
+      return manageCredential(message);
+    }
     if (message.op === 'openSettings') {
       await openSettings();
       return {kind: 'setup', label: 'Set up Quick Approve'};
@@ -88,6 +111,7 @@ export function createService({
   ): Promise<ViewState> {
     let credential: Credential | undefined;
     const revision = credentialRevision;
+    const preference = preferenceRevision;
     try {
       credential = await storage.get<Credential>('credential');
       emitDiagnostic(
@@ -111,10 +135,17 @@ export function createService({
         return reduceState({...snapshot, pageUser: message.pageUser});
       }
       if (message.op !== 'approve' || snapshot.state.kind !== 'available') return snapshot.state;
+      const action: ReviewAction =
+        message.action === 'changes' || message.action === 'comment' ? message.action : 'approve';
+      if (
+        action !== (snapshot.state.action ?? 'approve') ||
+        message.reviewId !== snapshot.state.reviewId
+      )
+        return canceled();
       if (!message.sha || message.sha !== snapshot.pr.head.sha) {
         return {
           kind: 'changed',
-          label: 'New commits arrived. Review the changes before approving',
+          label: 'New commits arrived. Review the changes before submitting',
           sha: snapshot.pr.head.sha,
         };
       }
@@ -127,16 +158,54 @@ export function createService({
         target,
         sha: message.sha,
         reviewIds: snapshot.reviews.map((review) => review.id),
+        action,
+        ...(message.reviewId ? {reviewId: message.reviewId} : {}),
       };
       await storage.set(snapshot.attemptKey, attempt);
       // Storage and acknowledgment can yield; repeat both checks at the dispatch boundary.
       if (
+        (message.reviewId &&
+          action !== pendingReviewAction(await storage.get('pendingReviewAction'))) ||
         !(await sameCredential(credential)) ||
         !(await verifyContext(sender, message)) ||
-        revision !== credentialRevision
+        revision !== credentialRevision ||
+        (message.reviewId && (preference !== preferenceRevision || preferenceWrites > 0))
       ) {
         await storage.remove(snapshot.attemptKey);
         return canceled();
+      }
+      if (message.reviewId) {
+        // Unlike creating an approval, submitting a pending review has no commitOID input.
+        // Refresh the head immediately before dispatch, then re-confirm the local context.
+        let current;
+        try {
+          current = await api.pull(target, credential.token, message.traceId);
+        } catch (error) {
+          await storage.remove(snapshot.attemptKey);
+          throw error;
+        }
+        if (current.head.sha !== message.sha) {
+          await storage.remove(snapshot.attemptKey);
+          return {
+            kind: 'changed',
+            label: 'New commits arrived. Review the changes before submitting',
+            sha: current.head.sha,
+          };
+        }
+        if (
+          current.state !== 'open' ||
+          current.merged ||
+          current.user.id === credential.user.id ||
+          action !== pendingReviewAction(await storage.get('pendingReviewAction')) ||
+          !(await sameCredential(credential)) ||
+          !(await verifyContext(sender, message)) ||
+          revision !== credentialRevision ||
+          preference !== preferenceRevision ||
+          preferenceWrites > 0
+        ) {
+          await storage.remove(snapshot.attemptKey);
+          return canceled();
+        }
       }
       try {
         emitDiagnostic(
@@ -145,16 +214,32 @@ export function createService({
           {traceId: message.traceId, phase: 'dispatch'},
           target.key,
         );
-        const review = await api.approve(
-          snapshot.pr.nodeId,
-          message.sha,
-          credential.token,
-          message.traceId,
-        );
-        if (!Number.isSafeInteger(review.id) || review.state !== 'APPROVED')
+        const review = message.reviewId
+          ? await api.submitReview(message.reviewId, action, credential.token, message.traceId)
+          : await api.approve(snapshot.pr.nodeId, message.sha, credential.token, message.traceId);
+        const pendingReview = snapshot.reviews.find((item) => item.nodeId === message.reviewId);
+        if (
+          !Number.isSafeInteger(review.id) ||
+          review.state !== reviewStates[action] ||
+          (message.reviewId && review.id !== pendingReview?.id)
+        )
           return uncertain(message.sha);
         await storage.remove(snapshot.attemptKey);
-        return {kind: 'approved', label: 'You approved this PR', sha: message.sha};
+        return {
+          kind:
+            action === 'approve'
+              ? 'approved'
+              : action === 'changes'
+                ? 'changes-requested'
+                : 'commented',
+          label:
+            action === 'approve'
+              ? 'You approved this PR'
+              : action === 'changes'
+                ? 'You requested changes on this PR'
+                : 'You submitted your review comments',
+          sha: message.sha,
+        };
       } catch (error) {
         if (isDefinitiveRejection(error)) {
           await storage.remove(snapshot.attemptKey);
@@ -261,7 +346,7 @@ export function createService({
       target.key,
     );
     const pending = attempt;
-    // A new own approval satisfies the requested result while the PR head is unchanged.
+    // A submitted pending review retains its ID; a new approval receives a new ID.
     // Without commit access, a changed head requires an explicit review of the unknown result.
     if (
       pending &&
@@ -269,14 +354,22 @@ export function createService({
       reviews.some(
         (review) =>
           review.user?.id === credential.user.id &&
-          review.state === 'APPROVED' &&
-          !pending.reviewIds.includes(review.id),
+          review.state === reviewStates[pending.action ?? 'approve'] &&
+          (pending.reviewId
+            ? review.nodeId === pending.reviewId
+            : !pending.reviewIds.includes(review.id)),
       )
     ) {
       await storage.remove(attemptKey);
       attempt = undefined;
     }
-    const snapshot = {pr, reviews, user: credential.user, attemptKey};
+    const snapshot = {
+      pr,
+      reviews,
+      user: credential.user,
+      attemptKey,
+      pendingReviewAction: pendingReviewAction(await storage.get('pendingReviewAction')),
+    };
     const state = reduceState({...snapshot, pageUser, pendingAttempt: Boolean(attempt)});
     emitDiagnostic(
       trace,
@@ -325,14 +418,21 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
       !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(message.traceId))
   )
     throw new Error('Invalid trace ID');
-  const credentialOps = ['status', 'setToken', 'removeToken'];
+  const credentialOps = ['status', 'setToken', 'removeToken', 'getPreferences', 'setPreferences'];
   if (credentialOps.includes(message.op)) {
     if (sender.url !== `chrome-extension://${extensionId}/options.html`)
       throw new Error('Unauthorized credential request');
-    const allowed = message.op === 'setToken' ? ['op', 'token', 'traceId'] : ['op', 'traceId'];
+    const allowed =
+      message.op === 'setToken'
+        ? ['op', 'token', 'traceId']
+        : message.op === 'setPreferences'
+          ? ['op', 'action', 'traceId']
+          : ['op', 'traceId'];
     if (
       Object.keys(message).some((key) => !allowed.includes(key)) ||
-      (message.op === 'setToken' && typeof message.token !== 'string')
+      (message.op === 'setToken' && typeof message.token !== 'string') ||
+      (message.op === 'setPreferences' &&
+        !['lock', 'changes', 'comment', 'approve'].includes(message.action ?? ''))
     )
       throw new Error('Malformed request');
     return null;
@@ -359,12 +459,21 @@ function authorize(message: ExtensionMessage, sender: MessageSender, extensionId
     'pageUser',
     'generation',
     'traceId',
-    ...(message.op === 'approve' ? ['sha'] : []),
+    ...(message.op === 'approve' ? ['sha', 'action', 'reviewId'] : []),
   ];
   if (Object.keys(message).some((key) => !allowed.includes(key)))
     throw new Error('Unexpected request field');
   if (message.op === 'approve' && !/^[a-f\d]{40,64}$/i.test(message.sha ?? ''))
     throw new Error('Invalid commit');
+  if (
+    message.op === 'approve' &&
+    ((message.action !== undefined &&
+      !['changes', 'comment', 'approve'].includes(message.action)) ||
+      (message.reviewId !== undefined &&
+        (typeof message.reviewId !== 'string' ||
+          !/^[A-Za-z0-9_=-]{1,200}$/.test(message.reviewId))))
+  )
+    throw new Error('Invalid review action');
   return target;
 }
 
@@ -381,7 +490,7 @@ function errorState(error: unknown): ViewState {
   if (statusOf(error) === 422)
     return {
       kind: 'error',
-      label: "GitHub couldn't accept this approval. Check for a pending review or changed PR state",
+      label: "GitHub couldn't accept this review. Check for a pending review or changed PR state",
     };
   return {
     kind: 'error',
@@ -396,14 +505,14 @@ function isDefinitiveRejection(error: unknown) {
 function canceled(): ViewState {
   return {
     kind: 'canceled',
-    label: 'The page or token changed. Check the current PR before approving',
+    label: 'The page or token changed. Check the current PR before submitting',
   };
 }
 
 function uncertain(sha: string): ViewState {
   return {
     kind: 'uncertain',
-    label: 'Approval result unknown. Check the review history before retrying',
+    label: 'Review result unknown. Check the review history before retrying',
     sha,
   };
 }

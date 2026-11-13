@@ -165,3 +165,29 @@
     animation: none;
   }
 }
+
+.qa-root > button.qa-button[data-state][data-icon='changes'],
+.qa-root > button.qa-button[data-state='changes-requested'] {
+  color: var(--fgColor-danger, #f85149);
+  background: var(--bgColor-danger-muted, rgba(248, 81, 73, 0.08));
+  border-color: var(--borderColor-danger-muted, rgba(248, 81, 73, 0.4));
+}
+.qa-root > button.qa-button[data-state][data-icon='comment'],
+.qa-root > button.qa-button[data-state='commented'] {
+  color: var(--fgColor-accent, #4493f8);
+  background: var(--bgColor-accent-muted, rgba(68, 147, 248, 0.08));
+  border-color: var(--borderColor-accent-muted, rgba(68, 147, 248, 0.4));
+}
+.qa-root > button.qa-button[data-state][data-icon='approve-review'] {
+  color: var(--fgColor-success, #3fb950);
+  background: var(--bgColor-success-muted, rgba(46, 160, 67, 0.15));
+  border-color: var(--borderColor-success-muted, rgba(46, 160, 67, 0.4));
+}
+.qa-root
+  > button.qa-button[data-state][data-icon]:is(
+    [data-icon='changes'],
+    [data-icon='comment'],
+    [data-icon='approve-review']
+  ):hover {
+  background: color-mix(in srgb, currentColor 12%, var(--bgColor-muted, #212830));
+}

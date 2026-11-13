@@ -64,3 +64,37 @@ test('blocks own PR, account mismatch, closed, merged and uncertain outcomes', (
   assert.equal(state({pr: {...pr, state: 'closed', merged: true}}).kind, 'merged');
   assert.equal(state({pendingAttempt: true}).kind, 'uncertain');
 });
+
+// Catches ignoring the preference or letting an earlier approval hide a pending review.
+test('configured actions apply only to an identifiable own pending review', () => {
+  const pending = {...review(2, 'PENDING'), nodeId: 'PRR_pending'};
+  for (const [action, label] of [
+    ['changes', 'Request changes and submit pending comments'],
+    ['comment', 'Submit pending comments as a review'],
+    ['approve', 'Approve and submit pending comments'],
+  ]) {
+    const result = state({reviews: [review(1, 'APPROVED'), pending], pendingReviewAction: action});
+    assert.equal(result.kind, 'available');
+    assert.equal(result.action, action);
+    assert.equal(result.reviewId, 'PRR_pending');
+    assert.equal(result.label, label);
+  }
+  assert.equal(state({reviews: [pending]}).kind, 'pending');
+  assert.equal(state({reviews: [pending], pendingReviewAction: 'invalid'}).kind, 'pending');
+  assert.equal(
+    state({reviews: [review(2, 'PENDING')], pendingReviewAction: 'approve'}).kind,
+    'pending',
+  );
+  assert.equal(
+    state({reviews: [{...pending, user: {id: 8}}], pendingReviewAction: 'changes'}).label,
+    'Quick approve',
+  );
+  assert.equal(
+    state({reviews: [pending], pageUser: 'other', pendingReviewAction: 'approve'}).kind,
+    'account',
+  );
+  assert.equal(
+    state({reviews: [pending], pendingAttempt: true, pendingReviewAction: 'approve'}).kind,
+    'uncertain',
+  );
+});

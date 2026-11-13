@@ -25,9 +25,11 @@ A compatible classic token also works; private repositories require the broader 
 
 ## Approval & recovery
 
-The extension leaves pending draft reviews untouched; finish those in GitHub. A changed commit requires reviewing the new changes and clicking again. Already approved, own, merged, and closed PRs show distinct inactive states. Hover or focus the button for the explanation.
+By default, a pending draft review shows a disabled lock; finish it in GitHub. In settings, **Pending review** lets you choose **Request changes** (red plus/minus), **Comment** (blue speech bubble), or **Approve** (green review check) instead. One click submits your existing pending review and publishes its saved comments. Text you have not saved in GitHub’s editor is not included. The preference stays in this Chrome profile and applies to your pending review, rather than other people’s unresolved conversation threads. Changing the setting does not submit a review.
 
-If an approval request has an uncertain result, the extension blocks another attempt even after a browser restart. Open the review history and use **Recheck**. **Allow another attempt** acknowledges that a retry may create a duplicate; it only clears the block. A separate click is required to approve again.
+A changed commit requires reviewing the new changes and clicking again. Already approved, own, merged, and closed PRs show distinct inactive states. Hover or focus the button for the explanation.
+
+If a review request has an uncertain result, the extension blocks another attempt even after a browser restart. Open the review history and use **Recheck**. **Allow another attempt** acknowledges that a retry may create a duplicate; it only clears the block. A separate click is required to approve again.
 
 The token is stored only in this Chrome profile and sent only to GitHub’s API. Local storage is not an encrypted vault. Removing the token in settings does not revoke it at GitHub. A compromised browser, extension, local profile, or GitHub page remains a security risk; the [security design](docs/superpowers/specs/2026-11-10-quick-approve-design.md#security) describes the boundaries.
 
